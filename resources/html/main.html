@@ -1,0 +1,1788 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VisReply</title>
+<style>
+/* ============ 设计令牌 · 极致美学（微信亲和风 Pro） ============ */
+:root{
+  --green:#07C160; --green-deep:#06AD56; --green-dark:#047a3c;
+  --green-bg:#e9f9f0; --green-line:#bfe8cf;
+  --grad:linear-gradient(135deg,#0ecb6c 0%,#07c160 50%,#00a34e 100%);
+  --page:#f2f6f4; --card:#ffffff; --ink:#152019; --ink-2:#4b5c52; --ink-3:#8b9c91;
+  --line:#e4ebe7; --line-2:#d6e0da;
+  --side-1:#0c2517; --side-2:#081a10;
+  --red:#e0524d; --red-bg:#fdeeee; --amber:#d98a12; --amber-bg:#fdf4e3;
+  --blue:#2f7ef5; --blue-bg:#eaf2fe;
+  --radius:16px; --radius-s:10px;
+  --shadow:0 1px 2px rgba(18,44,30,.05),0 8px 24px -6px rgba(18,44,30,.08);
+  --shadow-lift:0 2px 6px rgba(18,44,30,.06),0 16px 36px -8px rgba(18,44,30,.14);
+  --side-w:210px; --top-h:54px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;font:14px/1.55 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  color:var(--ink);background:var(--page);overflow:hidden;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+/* 环境光晕：贴着微信绿的呼吸底光，让页面不是死白 */
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(640px 420px at 6% -8%,rgba(7,193,96,.12),transparent 62%),
+    radial-gradient(760px 520px at 104% 22%,rgba(47,126,245,.07),transparent 58%),
+    radial-gradient(560px 420px at 50% 118%,rgba(7,193,96,.06),transparent 60%);
+}
+::selection{background:rgba(7,193,96,.22)}
+.app{position:relative;z-index:1;display:flex;height:100vh}
+button{font:inherit;color:inherit;cursor:pointer;border:none;background:none}
+input,select,textarea{font:inherit;color:var(--ink)}
+:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:4px}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#c3d2c8;border-radius:9px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#a9bfb2;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ============ 侧栏（深翡翠） ============ */
+.side{
+  width:var(--side-w);flex:none;display:flex;flex-direction:column;user-select:none;
+  background:linear-gradient(180deg,var(--side-1),var(--side-2) 78%);
+  border-right:1px solid rgba(255,255,255,.06);
+  box-shadow:inset -1px 0 0 rgba(255,255,255,.03),8px 0 28px -18px rgba(8,40,22,.5);
+}
+.brand{display:flex;align-items:center;gap:11px;padding:16px 16px 14px;
+  border-bottom:1px solid rgba(255,255,255,.07)}
+.brand img{width:34px;height:34px;border-radius:9px;
+  box-shadow:0 0 0 2px rgba(7,193,96,.55),0 4px 14px rgba(7,193,96,.35);
+  animation:brandPulse 3.4s ease-in-out infinite}
+@keyframes brandPulse{0%,100%{box-shadow:0 0 0 2px rgba(7,193,96,.5),0 4px 12px rgba(7,193,96,.28)}
+  50%{box-shadow:0 0 0 3px rgba(7,193,96,.7),0 6px 20px rgba(7,193,96,.5)}}
+.brand b{font-size:15px;color:#fff;letter-spacing:.3px}
+.brand span{display:block;font-size:11px;color:rgba(226,242,232,.45);margin-top:1px}
+.nav{padding:12px;flex:1;overflow:auto;display:flex;flex-direction:column;gap:3px}
+.nav button{
+  display:flex;align-items:center;gap:11px;width:100%;padding:10px 13px;
+  border-radius:11px;color:rgba(224,240,230,.66);font-size:13.5px;text-align:left;
+  transition:background .18s,color .18s,transform .18s,box-shadow .18s;
+}
+.nav button:hover{background:rgba(255,255,255,.07);color:#fff}
+.nav button:active{transform:scale(.98)}
+.nav button.active{background:var(--grad);color:#fff;font-weight:600;letter-spacing:.2px;
+  box-shadow:0 6px 18px -4px rgba(7,193,96,.55)}
+.nav button .ic{width:19px;flex:none;display:flex;align-items:center;justify-content:center;font-size:15px}
+.nav button .ic svg{display:block}
+.side-foot{padding:12px 16px;border-top:1px solid rgba(255,255,255,.07);font-size:11px;color:rgba(226,242,232,.4)}
+.side-foot a{color:rgba(226,242,232,.5);text-decoration:none;transition:color .15s}
+.side-foot a:hover{color:#fff}
+.side-foot .side-link{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;margin-bottom:8px;
+  border:1px solid rgba(255,255,255,.10);border-radius:9px;background:rgba(255,255,255,.04);
+  color:rgba(226,242,232,.85);font-size:13px;font-weight:600;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.side-foot .side-link:hover{background:rgba(45,212,191,.14);border-color:rgba(45,212,191,.35);color:#fff}
+.side-foot .side-link .ic{width:14px;flex:none;display:flex;align-items:center;justify-content:center}
+
+/* ============ 主区 ============ */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{
+  height:var(--top-h);flex:none;display:flex;align-items:center;gap:12px;
+  padding:0 10px 0 18px;background:rgba(255,255,255,.72);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid rgba(255,255,255,.6);
+  box-shadow:0 1px 0 var(--line);user-select:none;z-index:5;
+}
+.status-pill{
+  display:inline-flex;align-items:center;gap:8px;padding:5px 13px;border-radius:99px;
+  background:var(--green-bg);color:var(--green-dark);font-size:12.5px;font-weight:600;
+  border:1px solid rgba(7,193,96,.18);
+}
+.status-pill::before{content:"";width:7px;height:7px;border-radius:99px;background:var(--green);
+  animation:breathe 2.2s ease-in-out infinite}
+@keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(7,193,96,.45)}55%{box-shadow:0 0 0 5px rgba(7,193,96,0)}}
+.topbar .sp{flex:1}
+.view-title{font-size:14px;font-weight:600;color:var(--ink-1);letter-spacing:.3px;
+  display:inline-flex;align-items:center;gap:8px}
+.view-title::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 0 3px var(--green-bg)}
+.window-controls{display:flex;gap:4px}
+.win-btn{width:36px;height:29px;border-radius:8px;color:var(--ink-2);
+  display:inline-flex;align-items:center;justify-content:center;transition:background .14s,color .14s}
+.win-btn svg{display:block}
+.win-btn:hover{background:var(--green-bg);color:var(--green-dark)}
+.win-btn.close:hover{background:var(--red);color:#fff}
+
+.content{flex:1;overflow:auto;padding:20px 22px}
+.view{display:none;max-width:1220px;margin:0 auto}
+.view.active{display:block;animation:pageIn .26s cubic-bezier(.22,.9,.32,1)}
+@keyframes pageIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes btnIdle{0%,100%{box-shadow:0 9px 24px -6px rgba(7,193,96,.45),inset 0 1px 0 rgba(255,255,255,.25)}
+  50%{box-shadow:0 12px 30px -4px rgba(7,193,96,.72),inset 0 1px 0 rgba(255,255,255,.25)}}
+
+/* ============ 通用组件 ============ */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:18px 20px;margin-bottom:16px;
+  transition:box-shadow .22s}
+.card:hover{box-shadow:var(--shadow-lift)}
+.card h2{margin:0 0 4px;font-size:15px;display:flex;align-items:center;gap:8px;letter-spacing:.2px}
+.card h2::before{content:"";align-self:center;flex:none;width:7px;height:7px;border-radius:99px;
+  background:var(--grad);box-shadow:0 0 0 3px var(--green-bg);margin-right:2px}
+.card h2 .hint{font-weight:400;font-size:12px;color:var(--ink-3)}
+.card .sub{font-size:12px;color:var(--ink-3);margin:0 0 12px}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:8px 16px;border-radius:10px;background:var(--card);
+  border:1px solid var(--line-2);font-size:13px;font-weight:500;
+  transition:background .15s,border-color .15s,box-shadow .15s,transform .1s;
+}
+.btn:hover{background:var(--green-bg);border-color:var(--green-line);box-shadow:0 2px 8px rgba(7,193,96,.12)}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--grad);border-color:transparent;color:#fff;font-weight:600;
+  box-shadow:0 4px 14px -2px rgba(7,193,96,.4)}
+.btn.primary:hover{background:var(--grad);filter:saturate(1.08);box-shadow:0 6px 20px -2px rgba(7,193,96,.5)}
+.btn.danger{color:var(--red);border-color:#f0c9c9}
+.btn.danger:hover{background:var(--red-bg)}
+.btn:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 11px;border-radius:99px;
+  font-size:11.5px;font-weight:600;background:var(--blue-bg);color:var(--blue)}
+.pill::before{content:"";width:5px;height:5px;border-radius:99px;background:currentColor;opacity:.7}
+.pill.green{background:var(--green-bg);color:var(--green-dark)}
+.pill.red{background:var(--red-bg);color:var(--red)}
+.pill.warn{background:var(--amber-bg);color:var(--amber)}
+.pill.gray{background:#eef1f0;color:var(--ink-3)}
+.pill[hidden]{display:none}
+#modelLogList{max-height:340px;overflow:auto;background:#0f1714;border-radius:12px;padding:10px 12px;
+  font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;font-size:12px;line-height:1.55;color:#cfe9d8}
+#modelLogList .model-log-empty{color:#7f8c84;font-size:12.5px;padding:6px 2px}
+.log-line{white-space:pre-wrap;word-break:break-all;border-bottom:1px solid rgba(255,255,255,.04);padding:1px 0}
+.log-line.raw{color:#cfe9d8}
+.log-line:last-child{border-bottom:none}
+
+.field{width:100%;padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;
+  background:#fbfdfb;transition:border-color .15s,box-shadow .15s}
+.field:focus{border-color:var(--green);outline:none;box-shadow:0 0 0 3px rgba(7,193,96,.14)}
+textarea.field{resize:vertical;min-height:84px}
+select.field{cursor:pointer}
+.row{display:flex;align-items:center;justify-content:space-between;gap:18px;
+  padding:12px 0;border-bottom:1px dashed var(--line)}
+.row:last-child{border-bottom:none}
+.row .info b{display:block;font-size:13.5px;font-weight:600}
+.row .info span{font-size:12px;color:var(--ink-3)}
+.row .ctl{flex:none;display:flex;align-items:center;gap:10px}
+.row .ctl select,.row .ctl input.field{width:170px}
+
+.switch{position:relative;display:inline-block;width:42px;height:23px;flex:none}
+.switch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+.switch i{position:absolute;inset:0;border-radius:99px;background:#d3dbd6;transition:background .2s}
+.switch i::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;
+  border-radius:99px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.22);transition:transform .2s}
+.switch input:checked + i{background:var(--grad)}
+.switch input:checked + i::after{transform:translateX(19px)}
+.switch input:focus-visible + i{outline:2px solid var(--green);outline-offset:2px}
+.ctl-label{font-size:12.5px;color:var(--ink-3);min-width:34px;text-align:right}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:1000px){.grid2{grid-template-columns:1fr}}
+
+/* ============ 工作台 ============ */
+.dash-top{display:grid;grid-template-columns:1fr 340px;gap:16px}
+@media (max-width:1100px){.dash-top{grid-template-columns:1fr}}
+.run-card{display:flex;flex-direction:column}
+.run-main{display:flex;align-items:center;gap:24px;padding:8px 4px 16px}
+#startButton{
+  position:relative;width:96px;height:96px;border-radius:50%;flex:none;
+  background:var(--grad);color:#fff;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  font-size:13.5px;font-weight:700;letter-spacing:1px;
+  box-shadow:0 10px 26px -6px rgba(7,193,96,.55),inset 0 1px 0 rgba(255,255,255,.25);
+  transition:box-shadow .2s,transform .15s;
+  animation:btnIdle 3s ease-in-out infinite;
+}
+#startButton .ic{font-size:24px;line-height:1;text-shadow:0 1px 4px rgba(0,0,0,.15)}
+#startButton:hover{box-shadow:0 12px 30px -6px rgba(7,193,96,.65);transform:translateY(-1px)}
+#startButton:active{transform:scale(.95)}
+#startButton.running{
+  background:linear-gradient(135deg,#ff7a68,#e0524d);
+  box-shadow:0 10px 26px -6px rgba(224,82,77,.5),inset 0 1px 0 rgba(255,255,255,.25);
+  animation:none;
+}
+#startButton.running::after{content:"";position:absolute;inset:-7px;border-radius:50%;
+  border:2px solid rgba(224,82,77,.45);animation:ringPulse 1.7s ease-out infinite}
+@keyframes ringPulse{0%{transform:scale(.92);opacity:.9}100%{transform:scale(1.22);opacity:0}}
+.run-meta{min-width:0}
+.run-meta .st{font-size:18px;font-weight:700;margin-bottom:8px;letter-spacing:.3px}
+.counts{display:flex;flex-wrap:wrap;gap:8px}
+.count-chip{background:#f7faf8;border:1px solid var(--line);border-radius:11px;
+  padding:7px 12px;font-size:11px;color:var(--ink-3);font-weight:600;letter-spacing:.3px;
+  transition:transform .18s,box-shadow .18s,border-color .18s}
+.count-chip:hover{transform:translateY(-2px);box-shadow:0 6px 14px -6px rgba(18,44,30,.18);border-color:var(--green-line)}
+.count-chip b{display:block;font-size:19px;line-height:1.2;font-weight:700;
+  font-variant-numeric:tabular-nums;
+  background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.quick-row{display:flex;gap:10px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);flex-wrap:wrap}
+/* 微信窗口显隐：分段控件（保留两个 DOM ID，仅视觉合并） */
+.seg{display:inline-flex;background:#eef2f0;border:1px solid var(--line);border-radius:11px;padding:3px;gap:2px}
+.seg-btn{flex:1;min-width:88px;padding:7px 14px;border:none;background:transparent;border-radius:8px;
+  font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;transition:all .18s;white-space:nowrap}
+.seg-btn:hover{color:var(--green-dark)}
+.seg-btn.active{background:#fff;color:var(--green-dark);box-shadow:0 1px 4px rgba(18,44,30,.14)}
+.icon-btn{padding-left:13px;padding-right:13px}
+.icon-btn svg{width:15px;height:15px;flex:none}
+.preview-shell{display:flex;flex-direction:column}
+/* 预览容器：初始 .preview-box；后端 updatePreview 后会替换为 .live-preview，两者同款样式 */
+.preview-box,.live-preview{
+  position:relative;flex:1;min-height:230px;overflow:hidden;border-radius:12px;
+  background:
+    linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px) 0 0/100% 26px,
+    linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px) 0 0/26px 100%,
+    radial-gradient(400px 260px at 50% 0%,rgba(7,193,96,.14),transparent 60%),#0d1411;
+  display:flex;align-items:center;justify-content:center}
+.preview-box::before{content:"";position:absolute;top:calc(50% - 30px);left:50%;transform:translateX(-50%);
+  width:52px;height:52px;opacity:.22;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='6' width='18' height='14' rx='2.5'/%3E%3Ccircle cx='12' cy='13' r='3.6'/%3E%3Cpath d='M8.5 6l1.4-2h4.2L15.5 6'/%3E%3C/svg%3E") center/contain no-repeat}
+.preview-box::after{content:"画面待刷新";position:absolute;top:calc(50% + 26px);left:0;right:0;text-align:center;
+  color:rgba(255,255,255,.32);font-size:12.5px;letter-spacing:2px}
+.preview-box img,.live-preview img{width:100%;height:100%;object-fit:contain;
+  display:block;position:relative;z-index:1}
+.live-image-shell{width:100%;height:100%;display:flex;align-items:center;justify-content:center}
+.preview-foot{display:flex;align-items:center;gap:8px;margin-top:10px}
+.preview-foot .sp{flex:1}
+#debugTiming{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.log-card{display:flex;flex-direction:column}
+#modelLogList{flex:1;min-height:180px;max-height:340px;overflow:auto;
+  background:linear-gradient(180deg,#0c130f,#0a100d);border:1px solid #1d2b22;
+  border-radius:12px;padding:10px 14px;
+  font-family:"Cascadia Code",Consolas,"JetBrains Mono",monospace;font-size:12px;line-height:1.65}
+.model-log-empty{color:rgba(214,236,222,.4);padding:6px 0}
+.log-line{padding:1px 0;word-break:break-all;color:#c8ded0}
+.log-line .log-time{color:#5d7a67;margin-right:8px;font-variant-numeric:tabular-nums}
+.log-line.success{color:#5fe08d}
+.log-line.error{color:#ff8a80}
+.log-line.warning{color:#ffcf6e}
+
+/* ============ 队列 ============ */
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.chip{padding:6px 15px;border-radius:99px;border:1px solid var(--line-2);background:var(--card);
+  font-size:12.5px;color:var(--ink-2);transition:all .15s}
+.chip:hover{border-color:var(--green);color:var(--green-dark)}
+.chip.active{background:var(--grad);border-color:transparent;color:#fff;font-weight:600;
+  box-shadow:0 4px 12px -3px rgba(7,193,96,.45)}
+#replyList{display:flex;flex-direction:column;gap:10px}
+.queue-item{display:flex;align-items:flex-start;gap:13px;background:var(--card);
+  border:1px solid var(--line);border-radius:var(--radius);padding:13px 15px;
+  box-shadow:var(--shadow);transition:transform .18s,box-shadow .18s,border-color .18s;
+  animation:pageIn .2s ease}
+.queue-item:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);border-color:var(--green-line)}
+.queue-item.empty{justify-content:center;color:var(--ink-3);border-style:dashed;box-shadow:none}
+.queue-item.empty:hover{transform:none;box-shadow:none}
+.queue-avatar{width:40px;height:40px;border-radius:12px;flex:none;background:var(--grad);
+  color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;
+  box-shadow:0 4px 10px -3px rgba(7,193,96,.4)}
+.queue-main{flex:1;min-width:0}
+.queue-main strong{font-size:13.5px}
+.queue-main .q-text{font-size:12.5px;color:var(--ink-2);margin-top:3px;
+  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.queue-insights{margin-top:6px;display:flex;flex-direction:column;gap:4px}
+.insight-row{font-size:12px;color:var(--ink-2)}
+.insight-row b{color:var(--ink-3);font-weight:600;margin-right:6px}
+.queue-state{flex:none;font-size:11.5px;font-weight:600;padding:3.5px 11px;border-radius:99px;
+  background:var(--blue-bg);color:var(--blue)}
+.queue-state.manual{background:var(--amber-bg);color:var(--amber)}
+.queue-state.failed{background:var(--red-bg);color:var(--red)}
+.queue-state.waiting{background:var(--blue-bg);color:var(--blue)}
+.queue-state.done{background:var(--green-bg);color:var(--green-dark)}
+.stage-dots{display:flex;gap:4px;margin-top:8px}
+.stage-dots span{width:28px;height:4px;border-radius:4px;background:#e2e9e5;transition:background .25s}
+.stage-dots span.done{background:var(--grad)}
+
+/* ============ 知识库 / 话术 ============ */
+.section-gap{height:16px}
+.doc-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed var(--line);font-size:13px}
+.doc-row:last-child{border-bottom:none}
+.doc-row .nm{font-weight:600}
+.doc-row .pth{color:var(--ink-3);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-row .n{flex:none;margin-left:auto;font-size:11.5px;color:var(--ink-3)}
+.material-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.material-card{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;
+  transition:transform .18s,box-shadow .18s}
+.material-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lift)}
+.material-thumbnail{height:110px;background:#f4f6f5}
+.material-thumbnail img{width:100%;height:100%;object-fit:cover;display:block}
+.material-card-body{padding:8px 10px;display:flex;flex-direction:column;gap:8px}
+.material-card-body .field{font-size:11.5px;padding:5px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qa-box{background:linear-gradient(180deg,#f4fbf7,#eef7f2);border:1px solid var(--green-line);
+  border-radius:12px;padding:13px 15px}
+.qa-box .qa-q{font-weight:600;margin-bottom:6px}
+.qa-box .qa-a{font-size:13px;color:var(--ink-2);white-space:pre-wrap}
+.kv-row{display:flex;gap:10px;align-items:center;margin-top:10px}
+
+/* ============ 设置 ============ */
+.settings-split{display:grid;grid-template-columns:176px 1fr;gap:16px;align-items:start}
+.set-nav{position:sticky;top:0;display:flex;flex-direction:column;gap:3px;
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:9px;box-shadow:var(--shadow)}
+.set-nav button{position:relative;text-align:left;padding:9.5px 13px;border-radius:9px;font-size:13px;
+  color:var(--ink-2);transition:background .15s,color .15s}
+.set-nav button:hover{background:var(--green-bg)}
+.set-nav button.active{background:var(--green-bg);color:var(--green-dark);font-weight:600}
+.set-nav button.active::before{content:"";position:absolute;left:0;top:22%;bottom:22%;width:3px;
+  border-radius:3px;background:var(--grad)}
+.set-pane{display:none}
+.set-pane.active{display:block;animation:pageIn .2s ease}
+.seg{display:inline-flex;border:1px solid var(--line-2);border-radius:10px;overflow:hidden;background:#fff}
+.seg button{padding:7px 15px;font-size:12.5px;color:var(--ink-2);transition:background .15s,color .15s}
+.seg button.active{background:var(--grad);color:#fff;font-weight:600}
+
+/* 确认弹层 */
+.confirm-mask{position:fixed;inset:0;background:rgba(10,22,15,.42);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  display:none;align-items:center;justify-content:center;z-index:60}
+.confirm-mask.open{display:flex}
+.confirm-box{background:#fff;border-radius:18px;padding:22px 24px;width:min(390px,90vw);
+  box-shadow:0 24px 70px rgba(8,30,18,.35);animation:pop .22s cubic-bezier(.22,1.1,.36,1)}
+@keyframes pop{from{opacity:0;transform:scale(.92) translateY(8px)}to{opacity:1;transform:none}}
+.confirm-box h3{margin:0 0 8px;font-size:15px}
+.confirm-box p{margin:0 0 18px;font-size:13px;color:var(--ink-2)}
+.confirm-box .acts{display:flex;justify-content:flex-end;gap:10px}
+
+/* 轻提示 */
+#toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%) translateY(16px);
+  background:rgba(14,32,22,.92);backdrop-filter:blur(8px);color:#fff;padding:10px 20px;
+  border-radius:99px;font-size:13px;border:1px solid rgba(255,255,255,.08);
+  box-shadow:0 12px 32px rgba(8,30,18,.35);opacity:0;pointer-events:none;
+  transition:all .28s cubic-bezier(.22,.9,.32,1);z-index:99;max-width:70vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (prefers-reduced-motion: reduce){
+  *{animation:none !important;transition:none !important}
+}
+/* ============ 历史记录（微信风格） ============ */
+.hist-wrap{display:grid;grid-template-columns:320px 1fr;gap:16px;height:calc(100vh - 150px);min-height:420px}
+.hist-list{display:flex;flex-direction:column;overflow:hidden;padding:0}
+.hist-list-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line)}
+.hist-list-title{font-weight:600;color:var(--ink-1);font-size:15px}
+.hist-list-body{overflow:auto;flex:1}
+.hist-item{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:12px 16px;cursor:pointer;transition:background .12s}
+.hist-item:hover{background:var(--green-bg)}
+.hist-item.active{background:var(--green-bg)}
+.hist-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hist-name{font-weight:600;color:var(--ink-1);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-time{font-size:11px;color:var(--ink-3);flex:none}
+.hist-item-preview{margin-top:3px;font-size:12px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-item-meta{margin-top:5px;display:flex;gap:8px;align-items:center}
+.hist-count{font-size:11px;color:var(--ink-3);background:rgba(0,0,0,.06);padding:1px 7px;border-radius:9px}
+.hist-intent{font-size:11px;color:var(--green-dark);background:var(--green-bg);padding:1px 7px;border-radius:9px}
+.hist-empty,.hist-detail-empty{padding:30px 16px;text-align:center;color:var(--ink-3);font-size:13px}
+.hist-detail{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.hist-detail-empty{flex:1;display:flex;align-items:center;justify-content:center}
+.hist-chat-head{padding:14px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--green-bg),transparent)}
+.hist-chat-title{font-weight:700;color:var(--ink-1);font-size:16px}
+.hist-chat-sub{margin-top:3px;font-size:12px;color:var(--ink-3)}
+.hist-chat-body{flex:1;overflow:auto;padding:18px;background:#f5f5f5;display:flex;flex-direction:column;gap:12px}
+.bubble-row{display:flex;gap:8px;align-items:flex-start}
+.bubble-row.other{justify-content:flex-start}
+.bubble-row.me{justify-content:flex-end}
+.bubble-av{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:600;color:#fff;background:var(--grad);box-shadow:0 2px 6px rgba(7,193,96,.3)}
+.bubble-row.me .bubble-av{background:var(--ink-3)}
+.bubble-col{display:flex;flex-direction:column;min-width:0}
+.bubble-time{font-size:10px;color:var(--ink-3);margin-top:3px;align-self:flex-start}
+.bubble-row.me .bubble-time{align-self:flex-end}
+.bubble-row.sys{justify-content:center}
+.bubble-row.sys .bubble{background:#ededed;color:var(--ink-3);font-size:12px;max-width:80%}
+.bubble{max-width:68%;padding:9px 13px;border-radius:12px;font-size:14px;line-height:1.5;word-break:break-word;white-space:pre-wrap}
+.bubble-row.other .bubble{background:#fff;color:var(--ink-1);border-top-left-radius:3px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.bubble-row.me .bubble{background:var(--green);color:#fff;border-top-right-radius:3px}
+.hist-reply-box{margin:0;padding:12px 18px;border-top:1px solid var(--line);background:var(--green-bg);font-size:13px;color:var(--ink-1)}
+.hist-reply-box b{color:var(--green-dark)}
+
+/* ============ 新用户引导 ============ */
+.top-link{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--ink-2);
+  text-decoration:none;padding:6px 12px;border-radius:9px;transition:all .15s}
+.top-link:hover{background:var(--green-bg);color:var(--green-dark)}
+.onboard-mask{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  background:rgba(8,20,14,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.onboard-mask[hidden]{display:none}
+.onboard-card{width:min(440px,92vw);background:#fff;border-radius:20px;padding:30px 30px 24px;
+  box-shadow:0 30px 80px -20px rgba(7,30,18,.5);text-align:center;animation:obPop .28s ease}
+@keyframes obPop{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+.onboard-logo{width:56px;height:56px;margin:0 auto 14px;border-radius:16px;display:flex;align-items:center;
+  justify-content:center;font-weight:800;font-size:20px;color:#fff;background:var(--grad);
+  box-shadow:0 8px 20px -6px rgba(7,193,96,.6)}
+.onboard-card h2{font-size:21px;margin:0 0 6px}
+.onboard-sub{color:var(--ink-3);font-size:13px;margin:0 0 20px}
+.onboard-steps{list-style:none;margin:0 0 22px;padding:0;text-align:left;display:flex;flex-direction:column;gap:14px}
+.onboard-steps li{display:flex;gap:12px;align-items:flex-start}
+.os-dot{flex:none;width:22px;height:22px;border-radius:99px;background:var(--green-bg);color:var(--green-dark);
+  display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;margin-top:1px}
+.onboard-steps b{font-size:13.5px}
+.onboard-steps span{display:block;font-size:12px;color:var(--ink-3);margin-top:2px}
+.onboard-actions{display:flex;gap:10px}
+.onboard-actions .btn{flex:1}
+
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ======== 左侧导航 ======== -->
+  <aside class="side">
+    <div class="brand">
+      <img src="../icons/app.png" alt="logo" width="30" height="30" />
+      <div><b>VisReply</b><span>自动接待 · 智能回复</span></div>
+    </div>
+    <nav class="nav" aria-label="主导航">
+      <button class="active" data-view="dash"><span class="ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M7 4.8v14.4c0 .8.9 1.3 1.6.9l11-7.2c.6-.4.6-1.4 0-1.8l-11-7.2c-.7-.4-1.6.1-1.6.9z"/></svg></span>工作台</button>
+      <button data-view="queue"><span class="ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg></span>消息队列</button>
+      <button data-view="knowledge"><span class="ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13"/><path d="M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/></svg></span>知识库</button>
+      <button data-view="rules"><span class="ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.7 3.3a2.2 2.2 0 0 1 3.1 3.1L8 18.3 4 19.5l1.2-4z"/></svg></span>话术与规则</button>
+      <button data-view="history"><span class="ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/></svg></span>历史记录</button>
+      <button data-view="settings"><span class="ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 21v-6M4 9V3M12 21v-9M12 6V3M20 21v-4M20 11V3"/><path d="M1.5 13h5M9.5 8h5M17.5 15h5"/></svg></span>设置</button>
+    </nav>
+    <div class="side-foot">
+      <button class="side-link" id="officialSite">
+        <span class="ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg></span>
+        官网
+      </button>
+      <div id="footVersion">v1.0.0</div>
+    </div>
+  </aside>
+
+  <!-- ======== 主区 ======== -->
+  <div class="main">
+    <header class="topbar">
+      <span class="status-pill" id="processStatus">待启动</span>
+      <span class="view-title" id="viewTitle">工作台</span>
+      <span class="sp"></span>
+      <span class="pill warn" id="onboardWarn" hidden>未配置 API Key</span>
+      <a class="top-link" id="helpLink" href="用户使用说明.html" title="使用说明">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M9 13h6M9 17h6"/></svg>
+        使用说明
+      </a>
+      <div class="window-controls" role="group" aria-label="窗口控制">
+        <button class="win-btn" id="windowMinimize" aria-label="最小化" title="最小化"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+        <button class="win-btn" id="windowMaximize" aria-label="最大化或还原" title="最大化/还原"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg></button>
+        <button class="win-btn close" id="windowClose" aria-label="关闭" title="关闭"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <!-- ======== 工作台 ======== -->
+      <section class="view active" id="view-dash" aria-label="工作台">
+        <div class="dash-top">
+          <div class="card run-card">
+            <div class="run-main">
+              <button id="startButton" aria-label="启动或停止助手">
+                <span class="ic">▶</span><span data-role="label">启动</span>
+              </button>
+              <div class="run-meta">
+                <div class="st">微信自动接待</div>
+                <div class="counts">
+                  <div class="count-chip"><b id="totalMessageCountLeft">0</b>总消息</div>
+                  <div class="count-chip"><b id="autoReplyCountLeft">0</b>已回复</div>
+                  <div class="count-chip"><b id="pendingMessageCountLeft">0</b>待处理</div>
+                  <div class="count-chip"><b id="manualReplyCountLeft">0</b>转人工</div>
+                  <div class="count-chip"><b id="skippedMessageCountLeft">0</b>已跳过</div>
+                </div>
+              </div>
+            </div>
+            <div class="quick-row">
+              <div class="seg" role="group" aria-label="微信窗口显隐">
+                <button class="seg-btn active" id="showWechatButton">显示微信</button>
+                <button class="seg-btn" id="hideWechatButton">后台运行</button>
+              </div>
+              <button class="btn icon-btn" id="refreshPreviewButton">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+                刷新画面
+              </button>
+              <span class="sp" style="flex:1"></span>
+            </div>
+          </div>
+
+          <div class="card preview-shell">
+            <h2>微信画面 <span class="pill" id="previewStatus">待刷新</span></h2>
+            <div class="preview-box" id="wechatPreview"></div>
+            <div class="preview-foot">
+              <span id="debugTiming"></span>
+              <span class="sp"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card log-card">
+          <h2>运行日志 <span class="hint">最近 200 条</span></h2>
+          <div id="modelLogList"><div class="model-log-empty">暂无日志，启动助手后这里会实时滚动运行状态。</div></div>
+        </div>
+      </section>
+
+      <!-- ======== 消息队列 ======== -->
+      <section class="view" id="view-queue" aria-label="消息队列">
+        <div class="chips" role="group" aria-label="状态筛选">
+          <button class="chip active" data-filter="all">全部</button>
+          <button class="chip" data-filter="sent">已回复</button>
+          <button class="chip" data-filter="waiting">处理中</button>
+          <button class="chip" data-filter="manual">待人工</button>
+          <button class="chip" data-filter="skipped">已跳过</button>
+        </div>
+        <div id="replyList">
+          <div class="queue-item empty" id="queueEmptyHint">暂无消息记录，启动助手后自动接待的消息会出现在这里。</div>
+        </div>
+        <template id="replyRowTemplate">
+          <article class="queue-item">
+            <div class="queue-avatar">微</div>
+            <div class="queue-main">
+              <strong data-role="contact"></strong>
+              <div class="q-text" data-role="text"></div>
+              <div class="queue-insights">
+                <div class="insight-row"><b>建议回复</b><span data-role="reply"></span></div>
+              </div>
+              <div class="stage-dots" data-role="progress"><span></span><span></span><span></span><span></span></div>
+            </div>
+            <span class="queue-state waiting" data-role="state">待处理</span>
+          </article>
+        </template>
+      </section>
+
+      <!-- ======== 知识库 ======== -->
+      <section class="view" id="view-knowledge" aria-label="知识库">
+        <div class="card">
+          <h2>业务资料索引 <span class="pill" id="knowledgeHealthPill">待检查</span></h2>
+          <p class="sub" id="knowledgeHealthText">点击「检查状态」查看系统读取到的业务资料。</p>
+          <div class="counts" style="margin-bottom:10px">
+            <div class="count-chip"><b id="knowledgeChunkCount">0</b>文字段落</div>
+            <div class="count-chip"><b id="knowledgeTextCount">0</b>条文字</div>
+            <div class="count-chip"><b id="knowledgeImageCount">0</b>张图片</div>
+            <div class="count-chip"><b id="knowledgeFileCount">0</b>个附件</div>
+          </div>
+          <div id="ragStatusText" class="sub" style="margin-bottom:8px"></div>
+          <div id="ragDocList"></div>
+          <div id="ragFailureBlock" hidden>
+            <h2 style="font-size:13px;margin-top:10px">未成功的文件</h2>
+            <div id="ragFailureList"></div>
+          </div>
+          <div class="quick-row" style="margin-top:12px">
+            <button class="btn" id="refreshRagStatusButton">检查状态</button>
+            <button class="btn" id="rebuildKnowledgeButton">重新整理索引</button>
+            <button class="btn" id="importKnowledgeFilesButton">导入文件</button>
+            <button class="btn danger" id="clearUploadedKnowledgeButton">清空资料</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>图片素材 <span class="pill gray" id="imageMaterialCount">0 张图片</span></h2>
+          <p class="sub">客户索要图片（案例、价目、样品图）时，助手会从这里选图发送。</p>
+          <div class="material-grid" id="imageMaterialList"></div>
+          <div id="imageMaterialEmpty" style="color:var(--ink-3);font-size:12.5px;padding:8px 0">还没有图片素材。</div>
+          <div class="kv-row" id="imageMaterialPagination" hidden>
+            <button class="btn" id="imageMaterialPrev" aria-label="上一组">‹</button>
+            <span id="imageMaterialPageNumber" style="font-size:12px;color:var(--ink-3)"></span>
+            <button class="btn" id="imageMaterialNext" aria-label="下一组">›</button>
+            <span class="sp" style="flex:1"></span>
+            <button class="btn primary" id="addImageMaterialButton">＋ 添加图片</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>模拟问答 <span class="hint">输入客户的话，试助手怎么回</span></h2>
+          <div class="grid2" style="margin-top:10px">
+            <div>
+              <label class="sub" for="learningQuestion">客户消息</label>
+              <textarea class="field" id="learningQuestion" placeholder="例如：这个多少钱…"></textarea>
+              <div class="kv-row">
+                <button class="btn primary" id="simulateSendButton">生成回复</button>
+                <button class="btn" id="adoptLearningButton" disabled>保存这条问答</button>
+              </div>
+            </div>
+            <div>
+              <label class="sub">助手回复预览</label>
+              <div class="qa-box" id="learningPreviewBox" hidden>
+                <div class="qa-q" id="learningQ"></div>
+                <div class="qa-a" id="learningA"></div>
+              </div>
+              <div class="sub" id="learningHint" style="margin-top:8px">生成后可一键保存到知识库常见问题。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======== 话术与规则 ======== -->
+      <section class="view" id="view-rules" aria-label="话术与规则">
+        <div class="card">
+          <h2>业务资料卡 <span class="hint">助手回复的事实依据</span></h2>
+          <p class="sub">价格、售后、发货等业务信息。越完整，助手答得越准。</p>
+          <textarea class="field" id="businessIdentityText" rows="7"
+            placeholder="例：本店主营××，价格为…；发货时间…；售后政策…"></textarea>
+          <div class="kv-row">
+            <button class="btn" id="previewBusinessButton">AI 整理预览</button>
+            <button class="btn primary" id="completeBusinessButton">AI 自动补全</button>
+            <span class="pill gray" id="businessPreviewPill" hidden></span>
+          </div>
+          <div class="qa-box" id="businessPreviewBox" hidden style="margin-top:10px">
+            <div class="qa-a" id="businessPreviewText"></div>
+            <div class="kv-row">
+              <button class="btn primary" id="businessApplyButton">采用整理结果</button>
+              <button class="btn" id="businessDiscardButton">放弃</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>常见问题与回复话术 <span class="pill gray" id="faqSaveState">未加载</span></h2>
+          <p class="sub">一行一条「问题=回复」，客户问到时优先按这里回复。</p>
+          <textarea class="field" id="faqEditor" rows="9" placeholder="多少钱=亲，价格请看价目表哦…"></textarea>
+          <div class="kv-row">
+            <button class="btn" id="loadFaqButton">重新加载</button>
+            <button class="btn primary" id="saveFaqButton">保存话术</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>不回复名单（黑名单） <span class="pill gray" id="skipSaveState">未加载</span></h2>
+          <p class="sub">名单里的联系人发消息不会被自动回复，一行一个微信号或昵称。</p>
+          <textarea class="field" id="skipListEditor" rows="6" placeholder="文件传输助手&#10;xxx"></textarea>
+          <div class="kv-row">
+            <button class="btn primary" id="saveSkipButton">保存名单</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>群聊规则 <span class="hint">与设置页「群聊」联动</span></h2>
+          <div class="row">
+            <div class="info"><b>群聊自动回复</b><span>开启后助手也会回复群里的@消息</span></div>
+            <label class="switch"><input type="checkbox" id="groupReplyEnabled" aria-label="群聊自动回复" /><i></i></label>
+          </div>
+          <div class="row">
+            <div class="info"><b>仅回复被@的消息</b><span>避免刷屏打扰群成员</span></div>
+            <label class="switch"><input type="checkbox" id="groupRequireMention" aria-label="仅回复被@消息" /><i></i></label>
+          </div>
+          <div class="row">
+            <div class="info"><b>允许回复的群</b><span>留空表示所有群，一行一个群名</span></div>
+            <textarea class="field" id="groupAllowedGroups" rows="3" style="width:320px" aria-label="允许回复的群"></textarea>
+          </div>
+          <div class="row">
+            <div class="info"><b>@名单</b><span>需要@回复时使用的名字，一行一个</span></div>
+            <textarea class="field" id="groupMentionNames" rows="3" style="width:320px" aria-label="艾特名单"></textarea>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======== 设置 ======== -->
+      <section class="view" id="view-settings" aria-label="设置">
+        <div class="settings-split">
+          <nav class="set-nav" aria-label="设置分组">
+            <button class="active" data-pane="model">模型服务</button>
+            <button data-pane="reply">自动回复</button>
+            <button data-pane="vision">识别与性能</button>
+            <button data-pane="friend">好友申请</button>
+            <button data-pane="group">群聊</button>
+            <button data-pane="general">通用</button>
+            <button data-pane="data">数据与诊断</button>
+          </nav>
+
+          <div>
+            <!-- 模型 -->
+            <div class="set-pane active card" data-pane="model">
+              <h2>模型服务 <span class="pill gray" id="checkModelPill">未检查</span></h2>
+              <p class="sub">OpenAI 兼容接口；密钥只保存在本机 config.yaml。</p>
+              <div class="row">
+                <div class="info"><b>接口地址</b><span>通常以 /v1 结尾</span></div>
+                <input class="field" style="width:320px" id="textBaseUrl" type="url" name="base_url"
+                  placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="row">
+                <div class="info"><b>API Key</b><span id="modelKeyHint">尚未保存 API Key</span></div>
+                <input class="field" style="width:320px" id="textApiKey" type="password" name="api_key"
+                  placeholder="sk-…" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="row">
+                <div class="info"><b>模型名称</b><span>需支持文字+图片输入</span></div>
+                <input class="field" style="width:320px" id="customTextModel" name="model"
+                  placeholder="qwen-vl-max" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="row">
+                <div class="info"><b>OCR 模式</b><span>本地=离线识别；AI=视觉模型；混合=本地优先 AI 兜底</span></div>
+                <select class="field" id="ocrMode" name="ocr_mode">
+                  <option value="hybrid">混合（推荐）</option><option value="local">本地</option><option value="ai">AI 视觉</option>
+                </select>
+              </div>
+              <div class="row">
+                <div class="info"><b>深度思考</b><span>更聪明但更慢，闲聊场景建议关闭</span></div>
+                <label class="switch"><input type="checkbox" id="enableThinking" aria-label="深度思考" /><i></i></label>
+              </div>
+              <div class="kv-row">
+                <button class="btn" id="testModelButton">测试连通性</button>
+              </div>
+            </div>
+
+            <!-- 自动回复 -->
+            <div class="set-pane card" data-pane="reply">
+              <h2>自动回复</h2>
+              <div class="row">
+                <div class="info"><b>自动发送回复</b><span>关闭后只识别不发送</span></div>
+                <label class="switch"><input type="checkbox" id="enableRpaSend" aria-label="自动发送回复" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>低于置信度转人工</b><span>识别没把握时不硬答</span></div>
+                <label class="switch"><input type="checkbox" id="enforceMinConfidence" aria-label="低于置信度转人工" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>闲聊兜底</b><span>没匹配到资料时的闲聊回复</span></div>
+                <label class="switch"><input type="checkbox" id="fallbackChitchatEnabled" aria-label="闲聊兜底" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>连续消息合并</b><span>客户连发多条时合成一条回复</span></div>
+                <select class="field" id="mergeReplySegments" name="merge_mode">
+                  <option value="merge">合成一条</option><option value="split">分开发送</option>
+                </select>
+              </div>
+              <div class="row">
+                <div class="info"><b>键盘前台模式</b><span>效率优先 / 兼容优先</span></div>
+                <div class="seg" id="foregroundKeyboardMode" role="group" aria-label="键盘前台模式">
+                  <button class="mode-option active" data-foreground-mode="efficiency" type="button">效率</button>
+                  <button class="mode-option" data-foreground-mode="compatibility" type="button">兼容</button>
+                </div>
+              </div>
+              <div class="row">
+                <div class="info"><b>引用原消息回复</b></div>
+                <label class="switch"><input type="checkbox" id="quoteReplyEnabled" aria-label="引用原消息回复" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>疑难转人工</b><span>答不上来时提醒你接管</span></div>
+                <label class="switch"><input type="checkbox" id="handoffTrouble" aria-label="疑难转人工" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>识别模式</b><span>双击置顶=更稳；红点直点=更快</span></div>
+                <select class="field" id="recognitionMode" name="recognition_mode">
+                  <option value="double_click_pin">双击置顶（推荐）</option>
+                  <option value="red_dot">红点直点</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 识别与性能 -->
+            <div class="set-pane card" data-pane="vision">
+              <h2>识别与性能</h2>
+              <div class="row">
+                <div class="info"><b>视觉模型兜底</b><span>本地 OCR 没把握时升级视觉模型</span></div>
+                <label class="switch"><input type="checkbox" id="visionFallbackEnabled" aria-label="视觉模型兜底" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>兜底触发阈值</b><span>OCR 置信度低于此值才升级</span></div>
+                <select class="field" id="fallbackMinConfidence" name="fallback_min_confidence">
+                  <option value="0.5">0.5</option><option value="0.6">0.6</option>
+                  <option value="0.7" selected>0.7（默认）</option><option value="0.8">0.8</option>
+                </select>
+              </div>
+              <div class="row">
+                <div class="info"><b>视觉模型超时(秒)</b></div>
+                <select class="field" id="visionTimeoutSeconds" name="vision_timeout_seconds">
+                  <option value="15">15</option><option value="18" selected>18（推荐）</option>
+                  <option value="20">20</option><option value="30">30</option>
+                </select>
+              </div>
+              <div class="row">
+                <div class="info"><b>空闲扫描间隔(秒)</b><span>无未读时两轮扫描的等待</span></div>
+                <select class="field" id="idleSleepSeconds" name="idle_sleep_seconds">
+                  <option value="0.5">0.5</option><option value="1">1</option>
+                  <option value="2" selected>2（默认）</option><option value="3">3</option><option value="5">5</option>
+                </select>
+              </div>
+              <div class="row">
+                <div class="info"><b>活跃循环间隔(秒)</b><span>处理完一轮后的等待</span></div>
+                <select class="field" id="cycleSleepSeconds" name="cycle_sleep_seconds">
+                  <option value="0.2">0.2</option><option value="0.5" selected>0.5（默认）</option>
+                  <option value="1">1</option><option value="2">2</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 好友申请 -->
+            <div class="set-pane card" data-pane="friend">
+              <h2>好友申请</h2>
+              <div class="row">
+                <div class="info"><b>自动通过好友</b></div>
+                <label class="switch"><input type="checkbox" id="friendAutoAccept" aria-label="自动通过好友" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>通过方式</b></div>
+                <select class="field" id="friendAcceptMode" name="friend_accept_mode">
+                  <option value="accept_all">全部通过</option><option value="keyword_rules">只通过关键词</option>
+                </select>
+              </div>
+              <div class="row">
+                <div class="info"><b>通过关键词</b><span>一行一个</span></div>
+                <textarea class="field" id="friendKeywords" rows="3" style="width:320px" aria-label="通过关键词"></textarea>
+              </div>
+              <div class="row">
+                <div class="info"><b>检查间隔(秒)</b></div>
+                <input class="field" style="width:120px" id="friendCheckInterval" type="number" min="5" name="friend_check_interval" />
+              </div>
+              <div class="row">
+                <div class="info"><b>每轮最多通过</b></div>
+                <input class="field" style="width:120px" id="friendMaxPerCycle" type="number" min="1" name="friend_max_per_cycle" />
+              </div>
+              <div class="row">
+                <div class="info"><b>发送欢迎语</b></div>
+                <label class="switch"><input type="checkbox" id="friendSendWelcome" aria-label="发送欢迎语" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>欢迎语内容</b></div>
+                <textarea class="field" id="friendWelcomeText" rows="3" style="width:320px" aria-label="欢迎语内容"></textarea>
+              </div>
+            </div>
+
+            <!-- 群聊（切换开关与话术页联动） -->
+            <div class="set-pane card" data-pane="group">
+              <h2>群聊</h2>
+              <p class="sub">与「话术与规则」页的群聊规则是同一份配置。</p>
+              <div class="row">
+                <div class="info"><b>群聊自动回复</b></div>
+                <label class="switch"><input type="checkbox" id="groupReplyEnabled2" aria-label="群聊自动回复" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>仅回复被@的消息</b></div>
+                <label class="switch"><input type="checkbox" id="groupRequireMention2" aria-label="仅回复被@消息" /><i></i></label>
+              </div>
+            </div>
+
+            <!-- 通用 -->
+            <div class="set-pane card" data-pane="general">
+              <h2>通用</h2>
+              <div class="row">
+                <div class="info"><b>语音自动转文字</b></div>
+                <label class="switch"><input type="checkbox" id="voiceAutoConvert" aria-label="语音自动转文字" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>开机自动启动助手</b></div>
+                <label class="switch"><input type="checkbox" id="startupAutoStart" aria-label="开机自动启动助手" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>自动检查更新</b></div>
+                <label class="switch"><input type="checkbox" id="autoUpdateCheck" aria-label="自动检查更新" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>诊断记录保存</b><span>到期自动清理</span></div>
+                <select class="field" id="screenshotRetention" name="screenshot_retention">
+                  <option value="7">7 天</option><option value="30">30 天</option>
+                  <option value="-1">长期保存</option><option value="0">不保存</option>
+                </select>
+              </div>
+              <div class="row">
+                <div class="info"><b>更新记录</b></div>
+                <button class="btn" id="changelogButton">查看</button>
+              </div>
+            </div>
+
+            <!-- 数据与诊断 -->
+            <div class="set-pane card" data-pane="data">
+              <h2>数据与诊断</h2>
+              <div class="row">
+                <div class="info"><b>数据位置</b><span>本机配置、知识库和诊断文件</span></div>
+                <input class="field" style="width:260px" id="dataPath" value="data/" readonly aria-label="数据位置" />
+              </div>
+              <div class="row">
+                <div class="info"><b>打开数据目录</b></div>
+                <button class="btn" id="openDataDirButton">打开文件夹</button>
+              </div>
+              <div class="row">
+                <div class="info"><b>导出诊断包</b><span>排查问题时发给技术支持</span></div>
+                <button class="btn primary" id="exportDiagnosticsButton">导出</button>
+              </div>
+              <div class="row">
+                <div class="info"><b>清理诊断记录</b><span>按保存时限清理旧文件</span></div>
+                <button class="btn danger" id="cleanOldLogsButton">清理</button>
+              </div>
+              <div class="row">
+                <div class="info"><b>固定测试</b><span class="pill gray" id="fixedTestStatusPill">未运行</span></div>
+                <button class="btn" id="runFixedTestsButton">运行测试</button>
+              </div>
+              <div id="fixedTestResult" class="sub" style="margin-top:8px"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <button class="btn primary" id="saveSettingsButton">保存设置</button>
+          <span class="sub" style="display:inline-block;margin-left:12px;vertical-align:middle">改动后需保存才生效</span>
+        </div>
+      </section>
+
+      <section class="view" id="view-history" aria-label="历史记录">
+        <div class="hist-wrap">
+          <aside class="hist-list card">
+            <div class="hist-list-head">
+              <span class="hist-list-title">聊天历史</span>
+              <button class="btn ghost sm" id="clearHistoryBtn">清空</button>
+            </div>
+            <div class="hist-list-body" id="historyList">
+              <div class="hist-empty">暂无记录，识别到会话后会自动归档</div>
+            </div>
+          </aside>
+          <div class="hist-detail" id="historyDetail">
+            <div class="hist-detail-empty">选择左侧会话查看完整聊天记录</div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<div class="confirm-mask" id="confirmMask" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="confirm-box">
+    <h3 id="confirmTitle"></h3>
+    <p id="confirmMessage"></p>
+    <div class="acts">
+      <button class="btn" id="confirmCancel">取消</button>
+      <button class="btn danger" id="confirmOk">确定</button>
+    </div>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+/* =========================================================================
+ * 微信AI助手 · 全新 UI（微信亲和风）
+ * 桥接契约：
+ *  - 后端注入的 INJECT_JS 提供 window.callBridge / __log / apiReady，
+ *    并持有窗口拖动/缩放、最小化/最大化/关闭按钮的绑定（ID 见 DOM）。
+ *  - 后端 evaluate_js 调用本页定义的：setProcessStatus / setStartButton /
+ *    updatePreview / setCounts / appendReplyRow / pushLog / setKnowledgeCount。
+ *  - 前端经 window.callBridge(method, payloadJson, cb) 调用 30+ 个 API。
+ * ========================================================================= */
+
+/* ---------- 基础工具 ---------- */
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+  return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+
+var _toastTimer = null;
+function toast(msg){
+  var el = $("toast"); if (!el || !msg) return;
+  el.textContent = msg; el.classList.add("show");
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function(){ el.classList.remove("show"); }, 2600);
+}
+
+window.appendRawLog = function(text){
+  var box = document.getElementById("modelLogList");
+  if (!box) return;
+  var ph = box.querySelector(".model-log-empty");
+  if (ph) ph.remove();
+  var line = document.createElement("div");
+  line.className = "log-line raw";
+  line.textContent = text;
+  box.appendChild(line);
+  while (box.children.length > 200) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+};
+
+function call(method, payload, cb){
+  var api = window.pywebview && window.pywebview.api;
+  if (!api || typeof api[method] !== "function") {
+    if (cb) cb("{}");
+    return;
+  }
+  var raw = JSON.stringify(payload == null ? {} : payload);
+  try {
+    Promise.resolve(api[method](raw)).then(function(r){ if (cb) cb(r); })
+      .catch(function(){ if (cb) cb("{}"); });
+  } catch (e) { if (cb) cb("{}"); }
+}
+function resultOf(raw){
+  if (raw && typeof raw === "object") return raw;
+  try { return JSON.parse(raw || "{}"); } catch (e) { return {}; }
+}
+
+function openConfirm(opts){
+  var mask = $("confirmMask"); if (!mask) { if (opts.onOk) opts.onOk(); return; }
+  $("confirmTitle").textContent = opts.title || "确认操作";
+  $("confirmMessage").textContent = opts.message || "";
+  var ok = $("confirmOk"), cancel = $("confirmCancel");
+  ok.textContent = opts.okText || "确定";
+  var onOk = function(){ mask.classList.remove("open"); ok.onclick = null; cancel.onclick = null; if (opts.onOk) opts.onOk(); };
+  var onCancel = function(){ mask.classList.remove("open"); ok.onclick = null; cancel.onclick = null; if (opts.onCancel) opts.onCancel(); };
+  ok.onclick = onOk; cancel.onclick = onCancel;
+  mask.classList.add("open");
+  ok.focus();
+}
+function on(id, fn){
+  var el = $(id);
+  if (el) { el.addEventListener("click", fn); return; }
+  // 元素尚未解析（如写在 <script> 之后的 onboardMask 按钮）：等 DOM 就绪再绑，
+  // 否则 getElementById 返回 null 导致事件绑定失败（点击无反应、遮罩关不掉）。
+  document.addEventListener("DOMContentLoaded", function(){
+    var e = $(id); if (e) e.addEventListener("click", fn);
+  });
+}
+
+/* ---------- 视图切换 ---------- */
+(function initNav(){
+  var btns = document.querySelectorAll(".nav button[data-view]");
+  function activate(name){
+    Array.prototype.forEach.call(btns, function(b){
+      b.classList.toggle("active", b.dataset.view === name);
+    });
+    document.querySelectorAll(".view").forEach(function(v){
+      v.classList.toggle("active", v.id === "view-" + name);
+    });
+    var vt = $("viewTitle");
+    if (vt) vt.textContent = ({dash:"工作台",queue:"消息队列",knowledge:"知识库",rules:"话术与规则",settings:"设置",history:"历史记录"})[name] || "";
+  }
+  Array.prototype.forEach.call(btns, function(b){
+    b.addEventListener("click", function(){ activate(b.dataset.view); });
+  });
+  activate("dash");
+})();
+
+/* ---------- 设置分组切换 ---------- */
+(function initSetNav(){
+  var btns = document.querySelectorAll(".set-nav button[data-pane]");
+  Array.prototype.forEach.call(btns, function(b){
+    b.addEventListener("click", function(){
+      Array.prototype.forEach.call(btns, function(x){ x.classList.toggle("active", x === b); });
+      document.querySelectorAll(".set-pane").forEach(function(p){
+        p.classList.toggle("active", p.dataset.pane === b.dataset.pane);
+      });
+    });
+  });
+})();
+
+/* =========================================================================
+ * 后端推送入口（函数名/参数与后端 evaluate_js 严格一致）
+ * ========================================================================= */
+window.setProcessStatus = function(text){
+  var el = $("processStatus"); if (el) el.textContent = text || "";
+};
+
+window.setStartButton = function(running){
+  var b = $("startButton"); if (!b) return;
+  b.classList.toggle("running", !!running);
+  var label = b.querySelector("[data-role=label]");
+  var ic = b.querySelector(".ic");
+  if (label) label.textContent = running ? "停止" : "启动";
+  if (ic) ic.textContent = running ? "■" : "▶";
+  b.setAttribute("aria-label", running ? "停止助手" : "启动助手");
+  try { b.blur(); } catch (e) {}
+};
+
+window.updatePreview = function(src){
+  var box = $("wechatPreview");
+  if (!box || !src) return;
+  var img = box.querySelector("img");
+  if (img) { img.src = src; }
+  else box.innerHTML = '<img src="' + src + '" alt="微信画面预览" />';
+  var pill = $("previewStatus");
+  if (pill) { pill.textContent = "实时同步"; pill.className = "pill green"; }
+};
+
+window.setCounts = function(total, replies, errors, pending, manual, skipped){
+  var map;
+  if (total && typeof total === "object") {
+    map = { totalMessageCountLeft: total.total, autoReplyCountLeft: total.sent,
+            pendingMessageCountLeft: total.pending, manualReplyCountLeft: total.manual,
+            skippedMessageCountLeft: total.skipped };
+  } else {
+    map = { totalMessageCountLeft: total, autoReplyCountLeft: replies,
+            pendingMessageCountLeft: pending, manualReplyCountLeft: manual,
+            skippedMessageCountLeft: skipped };
+  }
+  Object.keys(map).forEach(function(id){
+    var el = $(id); if (el) el.textContent = String(map[id] || 0);
+  });
+};
+
+function _stateMeta(status){
+  switch (status) {
+    case "sent":    return { label: "已回复", cls: "queue-state done" };
+    case "manual":  return { label: "待人工", cls: "queue-state manual" };
+    case "skipped": return { label: "已跳过", cls: "queue-state failed" };
+    case "failed":  return { label: "失败",   cls: "queue-state failed" };
+    default:        return { label: "处理中", cls: "queue-state waiting" };
+  }
+}
+var _STAGE_STEPS = { detected: 0, entering: 0, captured: 1, ocr: 1, analyzing: 2, sending: 3 };
+
+window.appendReplyRow = function(item){
+  var list = $("replyList");
+  if (!list || !item) return;
+  var hint = $("queueEmptyHint"); if (hint) hint.remove();
+  var art = null;
+  if (item.id) art = list.querySelector('.queue-item[data-id="' + item.id + '"]');
+  if (!art) {
+    var tpl = $("replyRowTemplate");
+    art = (tpl && tpl.content) ? tpl.content.firstElementChild.cloneNode(true) : document.createElement("article");
+    if (item.id) art.setAttribute("data-id", item.id);
+    if (list.firstChild) list.insertBefore(art, list.firstChild); else list.appendChild(art);
+  }
+  var contactEl = art.querySelector('[data-role="contact"]');
+  if (contactEl) contactEl.textContent = item.contact || item.who || "客户";
+  var textEl = art.querySelector('[data-role="text"]');
+  if (textEl) textEl.textContent = item.text || item.reason || "";
+  var replyEl = art.querySelector('[data-role="reply"]');
+  if (replyEl) replyEl.textContent = item.reply || (item.status === "manual" ? "待人工处理" : "");
+  var stateEl = art.querySelector('[data-role="state"]');
+  if (stateEl) {
+    var meta = _stateMeta(item.status || "running");
+    stateEl.textContent = item.stage_label || meta.label;
+    stateEl.className = meta.cls;
+  }
+  var prog = art.querySelector('[data-role="progress"]');
+  if (prog && item.stage) {
+    var step = _STAGE_STEPS[item.stage] || 0;
+    var spans = prog.querySelectorAll("span");
+    for (var i = 0; i < spans.length; i++) spans[i].className = (i <= step) ? "done" : "";
+  }
+  while (list.children.length > 60) list.removeChild(list.lastChild);
+  applyQueueFilter();
+};
+
+window.pushLog = function(entry){
+  if (!entry) return;
+  var text = entry.text || "", level = entry.level || "info";
+  // 禁止回传 __log：会构成无限回环
+  var el = $("modelLogList"); if (!el) return;
+  var ph = el.querySelector(".model-log-empty"); if (ph) ph.remove();
+  var line = document.createElement("div");
+  line.className = "log-line " + level;
+  var t = document.createElement("span");
+  t.className = "log-time"; t.textContent = new Date().toLocaleTimeString();
+  var m = document.createElement("span"); m.className = "log-msg"; m.textContent = text;
+  line.appendChild(t); line.appendChild(document.createTextNode(" ")); line.appendChild(m);
+  el.appendChild(line);
+  while (el.children.length > 200) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+};
+
+window.setKnowledgeCount = function(n){
+  var el = $("knowledgeChunkCount"); if (el) el.textContent = String(n || "0");
+};
+
+window.setLearningStatus = function(text, kind){
+  toast(text || "");
+};
+
+/* ---------- 工作台 ---------- */
+(function initDash(){
+  on("refreshPreviewButton", function(){
+    var btn = $("refreshPreviewButton"); if (btn) btn.disabled = true;
+    var pill = $("previewStatus");
+    if (pill) { pill.textContent = "截图处理中"; pill.className = "pill"; }
+    call("refreshPreview", {}, function(raw){
+      if (btn) btn.disabled = false;
+      var d = resultOf(raw);
+      if (d.ok && d.image) {
+        window.updatePreview(d.image);
+        var dbg = $("debugTiming");
+        if (dbg) dbg.textContent = "更新：" + new Date().toLocaleTimeString() + " · " + (d.width || "") + "×" + (d.height || "");
+        if (pill) { pill.textContent = "截图成功"; pill.className = "pill green"; }
+      } else {
+        if (pill) { pill.textContent = d.message || "截图失败"; pill.className = "pill red"; }
+        toast("刷新画面：" + (d.message || "失败"));
+      }
+    });
+  });
+  on("showWechatButton", function(){ setWechatSeg("showWechatButton"); call("showWechat", {}, function(raw){ toast(resultOf(raw).message || ""); }); });
+  on("hideWechatButton", function(){ setWechatSeg("hideWechatButton"); call("hideWechat", {}, function(raw){ toast(resultOf(raw).message || ""); }); });
+  on("helpLink", function(e){ e.preventDefault(); call("openHelp", {}, function(raw){ var d = resultOf(raw); if (d && d.message) toast(d.message); }); });
+  on("officialSite", function(e){ if(e) e.preventDefault(); call("openExternal", {url:"https://pushwebly.com/play/DViFxMMjLa-45HIeMLSYDYEZ/"}, function(raw){ var d = resultOf(raw); if (d && d.message) toast(d.message); }); });
+  function setWechatSeg(id){
+    var s = document.getElementById("showWechatButton"), h = document.getElementById("hideWechatButton");
+    if (s) s.classList.toggle("active", id === "showWechatButton");
+    if (h) h.classList.toggle("active", id === "hideWechatButton");
+  }
+})();
+
+/* ---------- 队列筛选 ---------- */
+function applyQueueFilter(){
+  var active = document.querySelector(".chip.active");
+  var f = active ? active.dataset.filter : "all";
+  document.querySelectorAll("#replyList .queue-item:not(.empty)").forEach(function(it){
+    var st = it.querySelector('[data-role="state"]');
+    var cls = st ? st.className : "";
+    var show = f === "all"
+      || (f === "sent" && cls.indexOf("done") >= 0)
+      || (f === "waiting" && cls.indexOf("waiting") >= 0)
+      || (f === "manual" && cls.indexOf("manual") >= 0)
+      || (f === "skipped" && cls.indexOf("failed") >= 0);
+    it.style.display = show ? "" : "none";
+  });
+}
+(function initQueue(){
+  document.querySelectorAll(".chip[data-filter]").forEach(function(c){
+    c.addEventListener("click", function(){
+      document.querySelectorAll(".chip[data-filter]").forEach(function(x){ x.classList.toggle("active", x === c); });
+      applyQueueFilter();
+    });
+  });
+})();
+
+/* ---------- 知识库：RAG ---------- */
+function renderRagStatus(d){
+  var tCount = $("knowledgeTextCount"), iCount = $("knowledgeImageCount"),
+      fCount = $("knowledgeFileCount"), pill = $("knowledgeHealthPill"),
+      health = $("knowledgeHealthText"), list = $("ragDocList"),
+      failBlock = $("ragFailureBlock"), failList = $("ragFailureList"),
+      stText = $("ragStatusText");
+  if (stText) stText.textContent = d.text || "";
+  if (tCount) tCount.textContent = String(d.chunk_count || 0);
+  if (iCount) iCount.textContent = String(d.image_count || 0);
+  if (fCount) fCount.textContent = String(d.file_count || 0);
+  if (pill) {
+    pill.textContent = d.health || "待检查";
+    pill.className = "pill " + (d.health === "充足" ? "green" : (d.health === "不足" ? "red" : ""));
+  }
+  if (health) health.textContent = d.health === "充足"
+    ? "资料充足，助手会按资料直接回答。"
+    : (d.health === "偏少" ? "资料偏少，建议继续补充。" : "资料不足时，助手会转人工确认。");
+  if (list) {
+    var docs = d.docs || [];
+    list.innerHTML = docs.map(function(doc){
+      return '<div class="doc-row"><span class="nm">' + esc(doc.name) + '</span>' +
+        '<span class="pth">' + esc(doc.path) + '</span><span class="n">' + (doc.chunks || 0) + ' 段</span></div>';
+    }).join("");
+  }
+  if (failList) {
+    var failed = d.failed || [];
+    failList.innerHTML = failed.map(function(doc){
+      return '<div class="doc-row"><span class="nm">' + esc(doc.name) + '</span>' +
+        '<span class="pth">未能进入知识库（可能编码不支持）</span></div>';
+    }).join("");
+  }
+  if (failBlock) failBlock.hidden = !(d.failed || []).length;
+}
+function refreshRagStatus(){
+  call("ragStatus", {}, function(raw){
+    var d = resultOf(raw);
+    if (d.ok) renderRagStatus(d); else toast(d.message || "读取失败");
+  });
+}
+(function initRag(){
+  on("refreshRagStatusButton", refreshRagStatus);
+  on("rebuildKnowledgeButton", function(){
+    var b = $("rebuildKnowledgeButton"); if (b) b.disabled = true;
+    call("rebuildKnowledge", {}, function(raw){
+      if (b) b.disabled = false;
+      toast(resultOf(raw).message || "整理完成");
+      refreshRagStatus();
+    });
+  });
+  on("clearUploadedKnowledgeButton", function(){
+    openConfirm({
+      title: "清空上传资料",
+      message: "将清空知识库目录下所有文件（会自动备份）。确定继续吗？",
+      okText: "清空",
+      onOk: function(){
+        call("clearUploadedKnowledge", { confirm: true }, function(raw){
+          toast(resultOf(raw).message || "已清空"); refreshRagStatus();
+        });
+      }
+    });
+  });
+  on("importKnowledgeFilesButton", function(){
+    call("importKnowledgeFiles", {}, function(raw){
+      var d = resultOf(raw); toast(d.message || "已导入"); refreshRagStatus();
+    });
+  });
+})();
+
+/* ---------- 知识库：图片素材 ---------- */
+var IMG_PER_PAGE = 5, imgItems = [], imgPage = 0;
+function renderImages(){
+  var list = $("imageMaterialList"), empty = $("imageMaterialEmpty"),
+      count = $("imageMaterialCount"), pager = $("imageMaterialPagination"),
+      pageNo = $("imageMaterialPageNumber");
+  var pages = Math.max(1, Math.ceil(imgItems.length / IMG_PER_PAGE));
+  if (imgPage >= pages) imgPage = pages - 1; if (imgPage < 0) imgPage = 0;
+  if (count) count.textContent = imgItems.length + " 张图片";
+  if (empty) empty.style.display = imgItems.length ? "none" : "block";
+  if (pager) pager.hidden = imgItems.length === 0;
+  if (pageNo) pageNo.textContent = (imgPage + 1) + " / " + pages;
+  if (!list) return;
+  var slice = imgItems.slice(imgPage * IMG_PER_PAGE, imgPage * IMG_PER_PAGE + IMG_PER_PAGE);
+  list.innerHTML = slice.map(function(it){
+    return '<article class="material-card"><div class="material-thumbnail">' +
+      '<img src="' + esc(it.url) + '" alt="' + esc(it.name) + '" loading="lazy" /></div>' +
+      '<div class="material-card-body"><div class="field">' + esc(it.name) + '</div>' +
+      '<button class="btn danger" data-name="' + esc(it.name) + '">删除</button></div></article>';
+  }).join("");
+  Array.prototype.forEach.call(list.querySelectorAll("button[data-name]"), function(btn){
+    btn.addEventListener("click", function(){
+      call("removeImageMaterial", { name: btn.getAttribute("data-name") }, function(raw){
+        toast(resultOf(raw).message || "已删除"); refreshImages();
+      });
+    });
+  });
+}
+function refreshImages(){
+  call("listImageMaterials", {}, function(raw){
+    var d = resultOf(raw);
+    if (d && d.ok) imgItems = d.items || [];
+    renderImages();
+  });
+}
+(function initMaterials(){
+  on("addImageMaterialButton", function(){
+    call("addImageMaterial", {}, function(raw){
+      var d = resultOf(raw); toast(d.message || ""); if (d.ok) refreshImages();
+    });
+  });
+  on("imageMaterialPrev", function(){ if (imgPage > 0) { imgPage--; renderImages(); } });
+  on("imageMaterialNext", function(){
+    var pages = Math.max(1, Math.ceil(imgItems.length / IMG_PER_PAGE));
+    if (imgPage < pages - 1) { imgPage++; renderImages(); }
+  });
+})();
+
+/* ---------- 知识库：模拟问答 ---------- */
+(function initLearning(){
+  var lastQA = null;
+  on("simulateSendButton", function(){
+    var q = ($("learningQuestion") || {}).value || "";
+    if (!q.trim()) { toast("先输入客户消息"); return; }
+    var btn = $("simulateSendButton"); if (btn) btn.disabled = true;
+    var hint = $("learningHint"); if (hint) hint.textContent = "正在生成…";
+    call("simulateLearning", { question: q.trim() }, function(raw){
+      if (btn) btn.disabled = false;
+      var d = resultOf(raw);
+      var box = $("learningPreviewBox"), qEl = $("learningQ"), aEl = $("learningA"), hint2 = $("learningHint");
+      var adopt = $("adoptLearningButton");
+      if (d.ok) {
+        lastQA = { question: d.question || q.trim(), answer: d.reply || "" };
+        if (box) box.hidden = false;
+        if (qEl) qEl.textContent = lastQA.question;
+        if (aEl) aEl.textContent = lastQA.reply || "（空回复）";
+        if (hint2) hint2.textContent = d.source ? ("来源：" + d.source) : "生成完成。";
+        if (adopt) adopt.disabled = false;
+      } else {
+        if (box) box.hidden = false;
+        if (qEl) qEl.textContent = q.trim();
+        if (aEl) aEl.textContent = d.message || "生成失败";
+        if (hint2) hint2.textContent = "生成失败：请检查模型配置。";
+        if (adopt) adopt.disabled = true;
+      }
+    });
+  });
+  on("adoptLearningButton", function(){
+    if (!lastQA || !lastQA.question || !lastQA.answer) { toast("需要先有一条完整问答"); return; }
+    var btn = $("adoptLearningButton"); if (btn) btn.disabled = true;
+    call("adoptLearning", { question: lastQA.question, answer: lastQA.answer }, function(raw){
+      if (btn) btn.disabled = false;
+      toast(resultOf(raw).message || (resultOf(raw).ok ? "已保存这条问答" : "保存失败"));
+    });
+  });
+})();
+
+/* ---------- 话术与规则：业务资料卡 ---------- */
+(function initBiz(){
+  var _previewCache = "";
+  on("previewBusinessButton", function(){
+    var text = ($("businessIdentityText") || {}).value || "";
+    if (!text.trim()) { toast("先填写业务资料"); return; }
+    var btn = $("previewBusinessButton"); if (btn) btn.disabled = true;
+    call("previewBusinessIdentity", { business_identity_text: text }, function(raw){
+      if (btn) btn.disabled = false;
+      var d = resultOf(raw);
+      var box = $("businessPreviewBox"), t = $("businessPreviewText"), pill = $("businessPreviewPill");
+      if (d.ok && d.preview) {
+        _previewCache = d.preview;
+        if (box) box.hidden = false;
+        if (t) t.textContent = d.preview;
+        if (pill) { pill.hidden = false; pill.textContent = "预览"; pill.className = "pill"; }
+      } else {
+        toast(d.message || "整理失败");
+      }
+    });
+  });
+  on("businessApplyButton", function(){
+    if (!_previewCache) return;
+    var ta = $("businessIdentityText"); if (ta) ta.value = _previewCache;
+    $("businessPreviewBox").hidden = true;
+    toast("已采用整理结果，记得在设置页保存");
+  });
+  on("businessDiscardButton", function(){ $("businessPreviewBox").hidden = true; });
+  on("completeBusinessButton", function(){
+    var text = ($("businessIdentityText") || {}).value || "";
+    var btn = $("completeBusinessButton"); if (btn) btn.disabled = true;
+    call("completeBusinessIdentity", { business_identity_text: text }, function(raw){
+      if (btn) btn.disabled = false;
+      var d = resultOf(raw);
+      if (d.ok && d.completed) {
+        var ta = $("businessIdentityText"); if (ta) ta.value = d.completed;
+        toast(d.message || "已补全");
+      } else toast(d.message || "补全失败");
+    });
+  });
+})();
+
+/* ---------- 话术与规则：FAQ / 黑名单 ---------- */
+function loadFaqIntoEditor(){
+  call("loadFaq", {}, function(raw){
+    var d = resultOf(raw);
+    if (d.ok) {
+      var ta = $("faqEditor"); if (ta) ta.value = d.text || "";
+      var st = $("faqSaveState"); if (st) { st.textContent = "已加载"; st.className = "pill green"; }
+    } else toast(d.message || "读取失败");
+  });
+}
+(function initFaq(){
+  on("loadFaqButton", loadFaqIntoEditor);
+  on("saveFaqButton", function(){
+    var text = ($("faqEditor") || {}).value || "";
+    call("saveFaq", { text: text }, function(raw){
+      var d = resultOf(raw);
+      var st = $("faqSaveState");
+      if (st) { st.textContent = d.ok === false ? "保存失败" : "已保存"; st.className = d.ok === false ? "pill red" : "pill green"; }
+      toast(d.message || (d.ok === false ? "保存失败" : "已保存话术"));
+    });
+  });
+})();
+
+/* ---------- 历史记录 ---------- */
+function fmtTime(t){
+  if(!t) return '';
+  var d = new Date(t);
+  if(isNaN(d.getTime())) return String(t);
+  function p(n){ return (n<10?'0':'')+n; }
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+function renderHistoryList(list){
+  var box = $('historyList'); if(!box) return;
+  box.innerHTML = '';
+  if(!list || !list.length){
+    box.innerHTML = '<div class="hist-empty">暂无记录，识别到会话后会自动归档</div>';
+    return;
+  }
+  list.forEach(function(it){
+    var el = document.createElement('button');
+    el.className = 'hist-item';
+    el.dataset.id = it.id;
+    el.innerHTML =
+      '<div class="hist-item-top"><span class="hist-name">'+esc(it.contact)+'</span>'+
+      '<span class="hist-time">'+fmtTime(it.created_at)+'</span></div>'+
+      '<div class="hist-item-preview">'+esc(it.preview||'')+'</div>'+
+      '<div class="hist-item-meta"><span class="hist-count">'+it.msg_count+' 条</span>'+
+      (it.intent ? '<span class="hist-intent">'+esc(it.intent)+'</span>' : '')+'</div>';
+    el.addEventListener('click', function(){ loadHistorySession(it.id); });
+    box.appendChild(el);
+  });
+}
+function loadHistorySession(id){
+  call('getChatSession', { id: id }, function(raw){
+    var d = resultOf(raw);
+    var detail = $('historyDetail'); if(!detail) return;
+    if(!d.ok || !d.session){ detail.innerHTML = '<div class="hist-detail-empty">无数据</div>'; return; }
+    var s = d.session, msgs = d.messages || [];
+    var html = '<div class="hist-chat-head"><div class="hist-chat-title">'+esc(s.contact)+
+      '</div><div class="hist-chat-sub">'+fmtTime(s.created_at)+' · '+s.msg_count+' 条'+
+      (s.intent ? ' · 意图 '+esc(s.intent) : '')+'</div></div><div class="hist-chat-body">';
+    msgs.forEach(function(m){
+      var side = (m.side === 'right') ? 'me' : ((m.side === 'center') ? 'sys' : 'other');
+      var t = m.created_at || m.time || m.timestamp;
+      var ts = t ? '<div class="bubble-time">'+fmtTime(t)+'</div>' : '';
+      var initial = (side === 'me') ? '我' : (side === 'sys' ? '' : esc((s.contact || '客').slice(0,1)));
+      var avHtml = (side === 'sys') ? '' : '<div class="bubble-av">'+initial+'</div>';
+      html += '<div class="bubble-row '+side+'">'+avHtml+
+              '<div class="bubble-col"><div class="bubble">'+esc(m.content || '')+'</div>'+ts+'</div></div>';
+    });
+    html += '</div>';
+    if(s.reply_text){ html += '<div class="hist-reply-box"><b>已发送回复：</b>'+esc(s.reply_text)+'</div>'; }
+    detail.innerHTML = html;
+    document.querySelectorAll('.hist-item').forEach(function(x){
+      x.classList.toggle('active', String(x.dataset.id) === String(id));
+    });
+  });
+}
+function loadHistory(){
+  call('listChatHistory', {}, function(raw){
+    var d = resultOf(raw);
+    renderHistoryList(d.sessions || []);
+  });
+}
+(function initHistory(){
+  on('clearHistoryBtn', function(){
+    openConfirm({ title:'清空历史记录', message:'将删除全部已归档的聊天记录，不可恢复。', okText:'清空',
+      onOk:function(){
+        call('clearChatHistory', {}, function(raw){
+          var d = resultOf(raw); toast(d.message || '已清空'); loadHistory();
+        });
+      } });
+  });
+  var navBtn = document.querySelector('.nav button[data-view=\'history\']');
+  if(navBtn) navBtn.addEventListener('click', loadHistory);
+})();
+
+var skipLoaded = false;
+function loadSkipList(){
+  call("get_skip_contacts", {}, function(raw){
+    var d = resultOf(raw);
+    var ta = $("skipListEditor");
+    if (ta) ta.value = (Array.isArray(d.contacts) ? d.contacts : []).join("\n");
+    skipLoaded = true;
+    var st = $("skipSaveState"); if (st) { st.textContent = "已加载"; st.className = "pill green"; }
+  });
+}
+(function initSkip(){
+  on("saveSkipButton", function(){
+    var ta = $("skipListEditor");
+    var contacts = ((ta && ta.value) || "").split("\n").map(function(s){ return s.trim(); }).filter(Boolean);
+    call("save_skip_contacts", { contacts: contacts }, function(raw){
+      var d = resultOf(raw);
+      var st = $("skipSaveState"); if (st) { st.textContent = "已保存"; st.className = "pill green"; }
+      toast(d.message || "已保存不回复名单");
+    });
+  });
+})();
+
+/* ---------- 设置：读写 ---------- */
+function switchOn(id){ var el = $(id); return !!(el && el.checked); }
+function setSwitch(id, v){ var el = $(id); if (el) el.checked = !!v; }
+function fieldValue(id){ var el = $(id); return el ? String(el.value || "").trim() : ""; }
+
+function collectAllSettings(){
+  var modeBtn = document.querySelector("#foregroundKeyboardMode .mode-option.active");
+  var lines = function(id){ return (fieldValue(id)).split("\n").map(function(s){ return s.trim(); }).filter(Boolean); };
+  return {
+    base_url: fieldValue("textBaseUrl"),
+    api_key: fieldValue("textApiKey"),
+    model: fieldValue("customTextModel"),
+    ocr_mode: fieldValue("ocrMode") || "hybrid",
+    enable_thinking: switchOn("enableThinking"),
+    enable_rpa_send: switchOn("enableRpaSend"),
+    min_confidence_on: switchOn("enforceMinConfidence"),
+    fallback_chitchat: switchOn("fallbackChitchatEnabled"),
+    merge_mode: fieldValue("mergeReplySegments") || "merge",
+    foreground_mode: modeBtn ? modeBtn.dataset.foregroundMode : "efficiency",
+    quote_reply: switchOn("quoteReplyEnabled"),
+    handoff_trouble: switchOn("handoffTrouble"),
+    recognition_mode: fieldValue("recognitionMode") || "double_click_pin",
+    vision_fallback_enabled: switchOn("visionFallbackEnabled"),
+    fallback_min_confidence: parseFloat(fieldValue("fallbackMinConfidence") || "0.7"),
+    vision_timeout_seconds: parseInt(fieldValue("visionTimeoutSeconds") || "18", 10),
+    idle_sleep_seconds: parseFloat(fieldValue("idleSleepSeconds") || "2.0"),
+    cycle_sleep_seconds: parseFloat(fieldValue("cycleSleepSeconds") || "0.5"),
+    friend_auto_accept: switchOn("friendAutoAccept"),
+    friend_accept_mode: fieldValue("friendAcceptMode") || "accept_all",
+    friend_keywords: lines("friendKeywords"),
+    friend_check_interval: parseInt(fieldValue("friendCheckInterval") || "30", 10),
+    friend_max_per_cycle: parseInt(fieldValue("friendMaxPerCycle") || "3", 10),
+    friend_send_welcome: switchOn("friendSendWelcome"),
+    friend_welcome_text: fieldValue("friendWelcomeText"),
+    group_reply: switchOn("groupReplyEnabled"),
+    require_mention: switchOn("groupRequireMention"),
+    allowed_groups: lines("groupAllowedGroups"),
+    mention_names: lines("groupMentionNames"),
+    voice_auto_convert: switchOn("voiceAutoConvert"),
+    business_identity_text: ($("businessIdentityText") || {}).value || "",
+    ui_auto_start: switchOn("startupAutoStart"),
+    ui_auto_update_check: switchOn("autoUpdateCheck"),
+    ui_screenshot_retention: fieldValue("screenshotRetention") || "7"
+  };
+}
+
+function applySettingsToForm(d){
+  if (!d) return;
+  // 空对象防御：桥未就绪时 call 会静默回调 {}，若继续执行会把所有开关
+  // 强制置为 !!undefined=false（尤其「自动发送回复」），用户一保存就把
+  // enable_rpa_send:false 写进 config.yaml 导致永远发送失败。空数据不覆盖 UI。
+  if (typeof d === "object" && Object.keys(d).length === 0) return;
+  if (d.base_url != null) $("textBaseUrl").value = d.base_url || "";
+  if (d.api_key != null) $("textApiKey").value = d.api_key || "";
+  if (d.model != null) $("customTextModel").value = d.model || "";
+  if (d.ocr_mode) $("ocrMode").value = d.ocr_mode;
+  setSwitch("enableRpaSend", d.enable_rpa_send);
+  setSwitch("enforceMinConfidence", d.min_confidence_on);
+  setSwitch("fallbackChitchatEnabled", d.fallback_chitchat);
+  setSwitch("enableThinking", d.enable_thinking);
+  if (d.merge_mode) $("mergeReplySegments").value = d.merge_mode;
+  if (d.foreground_mode) {
+    document.querySelectorAll("#foregroundKeyboardMode .mode-option").forEach(function(b){
+      b.classList.toggle("active", b.dataset.foregroundMode === d.foreground_mode);
+    });
+  }
+  setSwitch("quoteReplyEnabled", d.quote_reply);
+  setSwitch("handoffTrouble", d.handoff_trouble);
+  if (d.recognition_mode) $("recognitionMode").value = d.recognition_mode;
+  setSwitch("visionFallbackEnabled", d.vision_fallback_enabled);
+  if (d.fallback_min_confidence != null) $("fallbackMinConfidence").value = String(d.fallback_min_confidence);
+  if (d.vision_timeout_seconds != null) $("visionTimeoutSeconds").value = String(d.vision_timeout_seconds);
+  if (d.idle_sleep_seconds != null) $("idleSleepSeconds").value = String(d.idle_sleep_seconds);
+  if (d.cycle_sleep_seconds != null) $("cycleSleepSeconds").value = String(d.cycle_sleep_seconds);
+  setSwitch("friendAutoAccept", d.friend_auto_accept);
+  if (d.friend_accept_mode) $("friendAcceptMode").value = d.friend_accept_mode;
+  if ($("friendKeywords")) $("friendKeywords").value = (d.friend_keywords || []).join("\n");
+  if (d.friend_check_interval != null) $("friendCheckInterval").value = String(d.friend_check_interval);
+  if (d.friend_max_per_cycle != null) $("friendMaxPerCycle").value = String(d.friend_max_per_cycle);
+  setSwitch("friendSendWelcome", d.friend_send_welcome);
+  if (d.friend_welcome_text != null) $("friendWelcomeText").value = d.friend_welcome_text;
+  setSwitch("groupReplyEnabled", d.group_reply);
+  setSwitch("groupReplyEnabled2", d.group_reply);
+  setSwitch("groupRequireMention", d.require_mention);
+  setSwitch("groupRequireMention2", d.require_mention);
+  if ($("groupAllowedGroups")) $("groupAllowedGroups").value = (d.allowed_groups || []).join("\n");
+  if ($("groupMentionNames")) $("groupMentionNames").value = (d.mention_names || []).join("\n");
+  setSwitch("voiceAutoConvert", d.voice_auto_convert);
+  if (d.business_identity_text != null && $("businessIdentityText")) $("businessIdentityText").value = d.business_identity_text;
+  setSwitch("startupAutoStart", d.ui_auto_start);
+  setSwitch("autoUpdateCheck", d.ui_auto_update_check);
+  if (d.ui_screenshot_retention != null) $("screenshotRetention").value = String(d.ui_screenshot_retention);
+  if (d.api_key) {
+    var hint = $("modelKeyHint"); if (hint) hint.textContent = "已保存 API Key（仅本机）";
+  }
+}
+
+function loadSettingsIntoForm(){
+  call("loadSettings", {}, function(raw){
+    applySettingsToForm(resultOf(raw));
+  });
+}
+
+(function initSettings(){
+  on("saveSettingsButton", function(){
+    call("saveSettings", { settings: collectAllSettings() }, function(raw){
+      var d = resultOf(raw);
+      toast(d.ok === false ? (d.message || "保存失败") : (d.message || "已保存设置"));
+    });
+  });
+  on("testModelButton", function(){
+    var pill = $("checkModelPill");
+    if (pill) { pill.textContent = "检查中…"; pill.className = "pill warn"; }
+    call("test_model", { base_url: fieldValue("textBaseUrl"), api_key: fieldValue("textApiKey"), model: fieldValue("customTextModel") }, function(raw){
+      var d = resultOf(raw);
+      if (pill) { pill.textContent = d.ok ? "可用" : "不可用"; pill.className = d.ok ? "pill green" : "pill red"; }
+      toast(d.message || (d.ok ? "模型可用" : "模型不可用"));
+    });
+  });
+  document.querySelectorAll("#foregroundKeyboardMode .mode-option").forEach(function(b){
+    b.addEventListener("click", function(){
+      document.querySelectorAll("#foregroundKeyboardMode .mode-option").forEach(function(x){ x.classList.toggle("active", x === b); });
+    });
+  });
+  // 群聊双开关联动（settings 页 groupReplyEnabled2 ↔ rules 页 groupReplyEnabled）
+  var pairs = [["groupReplyEnabled", "groupReplyEnabled2"], ["groupRequireMention", "groupRequireMention2"]];
+  pairs.forEach(function(p){
+    var a = $(p[0]), b = $(p[1]);
+    if (a && b) {
+      a.addEventListener("change", function(){ b.checked = a.checked; });
+      b.addEventListener("change", function(){ a.checked = b.checked; });
+    }
+  });
+})();
+
+/* ---------- 数据与诊断 ---------- */
+(function initData(){
+  on("openDataDirButton", function(){ call("openDataDir", { target: "data" }, function(){}); });
+  on("exportDiagnosticsButton", function(){
+    var b = $("exportDiagnosticsButton"); if (b) b.disabled = true;
+    call("exportDiagnostics", {}, function(raw){
+      if (b) b.disabled = false;
+      var d = resultOf(raw); toast(d.message || (d.ok ? "已导出诊断包" : "导出失败"));
+    });
+  });
+  on("cleanOldLogsButton", function(){
+    openConfirm({
+      title: "清理诊断记录",
+      message: "将按保存时限清理旧日志和旧截图，确定继续吗？",
+      okText: "清理",
+      onOk: function(){
+        call("cleanOldLogs", { confirm: true, days: 7 }, function(raw){
+          toast(resultOf(raw).message || "已清理");
+        });
+      }
+    });
+  });
+  on("runFixedTestsButton", function(){
+    var b = $("runFixedTestsButton"), pill = $("fixedTestStatusPill"), out = $("fixedTestResult");
+    if (b) b.disabled = true;
+    if (pill) { pill.textContent = "运行中"; pill.className = "pill warn"; }
+    call("runFixedTests", {}, function(raw){
+      if (b) b.disabled = false;
+      var d = resultOf(raw);
+      if (pill) {
+        pill.textContent = d.ok ? (d.passed + "/" + d.total + " 通过") : "失败";
+        pill.className = "pill " + (d.ok ? (d.passed === d.total ? "green" : "") : "red");
+      }
+      if (out) out.textContent = d.message || "";
+    });
+  });
+  on("changelogButton", function(){
+    call("getChangelog", {}, function(raw){
+      var d = resultOf(raw);
+      openConfirm({ title: "更新记录", message: d.text || d.message || "暂无记录", okText: "知道了" });
+    });
+  });
+})();
+
+/* ---------- 启动 ---------- */
+(function boot(){
+  // 版本号：从桥接读配置回填侧栏
+  // 注意：必须等桥就绪再调 loadSettings。boot 同步执行时 pywebview.api 尚未注入，
+  // call() 会静默回调 {} → applySettingsToForm({}) 把所有开关重置为 false。
+  whenReady(function(){
+    call("loadSettings", {}, function(raw){
+      var d = resultOf(raw);
+      if (d && d.app_version) {
+        var v = $("footVersion"); if (v) v.textContent = d.app_version;
+      }
+      applySettingsToForm(d);
+      maybeShowOnboarding(d);
+    });
+  });
+  // 话术/黑名单/知识库状态延后加载（避免启动时桥未就绪）
+  function whenReady(fn){
+    var tries = 0;
+    (function tick(){
+      if (window.pywebview && window.pywebview.api) { fn(); return; }
+      if (++tries > 100) return;
+      setTimeout(tick, 150);
+    })();
+  }
+  whenReady(function(){
+    loadFaqIntoEditor();
+    loadSkipList();
+    refreshRagStatus();
+    refreshImages();
+  });
+
+  /* ---------- 新用户引导 ---------- */
+  function maybeShowOnboarding(d){
+    var hasKey = !!(d && (d.api_key || "").trim());
+    var dismissed = false;
+    try { dismissed = localStorage.getItem("visreply_onboarded") === "1"; } catch(e){}
+    if (!hasKey) { dismissed ? showOnboardWarn(true) : openOnboarding(); }
+    else { showOnboardWarn(false); }
+  }
+  function openOnboarding(){ var m = $("onboardMask"); if (m) m.hidden = false; }
+  function closeOnboarding(){
+    var m = $("onboardMask"); if (m) m.hidden = true;
+    try { localStorage.setItem("visreply_onboarded", "1"); } catch(e){}
+  }
+  function showOnboardWarn(on){ var w = $("onboardWarn"); if (w) w.hidden = !on; }
+  on("onboardGoSettings", function(){
+    closeOnboarding();
+    var btn = document.querySelector('.nav button[data-view="settings"]');
+    if (btn) btn.click();
+    setTimeout(function(){ var k = $("textApiKey"); if (k){ k.scrollIntoView({block:"center"}); k.focus(); } }, 350);
+  });
+  on("onboardLater", function(){ closeOnboarding(); showOnboardWarn(true); });
+})();
+</script>
+
+<div class="onboard-mask" id="onboardMask" hidden>
+  <div class="onboard-card" role="dialog" aria-modal="true" aria-labelledby="onboardTitle">
+    <div class="onboard-logo">VR</div>
+    <h2 id="onboardTitle">欢迎使用 VisReply</h2>
+    <p class="onboard-sub">微信自动接待助手 · 三步即可开始托管</p>
+    <ol class="onboard-steps">
+      <li><span class="os-dot">1</span><div><b>填写 AI 模型 API Key</b><span>回复能力来源，必填。密钥仅存本机 config。</span></div></li>
+      <li><span class="os-dot">2</span><div><b>开启「自动发送回复」</b><span>设置页开启后助手才会自动发送。</span></div></li>
+      <li><span class="os-dot">3</span><div><b>导入业务知识库（建议）</b><span>让回复更贴合你的业务。</span></div></li>
+    </ol>
+    <div class="onboard-actions">
+      <button class="btn primary" id="onboardGoSettings">去配置</button>
+      <button class="btn" id="onboardLater">稍后再说</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
