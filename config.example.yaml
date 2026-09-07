@@ -1,25 +1,26 @@
-# ============================================================
-# My WeChat Agent 配置示例
-# 复制为 config.yaml 并修改实际值。
-# 本文件键名与默认 config.yaml / src/config/settings.py 保持一致，
-# 照抄即可生效；标注 [未读取] 的键为保留兼容项，当前版本不消费。
-# ============================================================
+# ============================================
+# VisReply 配置示例（config.example.yaml）
+# 用法：复制本文件为 config.yaml，仅把两处 api_key 换成你的密钥即可运行。
+#      其余所有配置已与作者默认配置完全一致，一般无需修改。
+# 注意：真实 config.yaml 含密钥不入库；本示例 api_key 仅留占位符。
+# ============================================
+
 
 app:
-  name: "My WeChat Agent"
+  name: "VisReply"
   version: "v1.0.0"
 
 # ============================================
-# 视觉模型配置（用于 OCR + 多模态理解）
+# 视觉模型配置（用于OCR + 多模态理解）
 # ============================================
 vision_model:
   provider: openai_compatible
-  base_url: "https://your-endpoint/v1"
-  api_key: "sk-xxx"
+  base_url: "https://llm-b1hoacm0oh3hm1oa.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+  api_key: "sk-你的密钥"
   api_key_required: false              # 是否需要密钥
   api_style: openai_compatible
-  model: "your-vision-model"
-  timeout_seconds: 18                  # 视觉模型超时(秒)：快速失败兜底，避免慢接口卡死整轮循环
+  model: qwen3.8-27b
+  timeout_seconds: 18
   image_input: true                    # 支持图片输入
   image_detail: "high"                 # 图片细节: low/high/auto
   temperature: 0.1                     # 温度
@@ -29,23 +30,25 @@ vision_model:
   # ---- OCR 模式：local=仅本地RapidOCR, ai=直接调用视觉模型, hybrid=本地优先+AI兜底 ----
   ocr_mode: local
   # ---- L4 兜底升级（能低不高）：本地OCR结果不足信时才调用视觉模型 ----
-  fallback_enabled: true               # 是否启用"本地OCR不足信 -> 升级视觉模型"
-  fallback_min_confidence: 0.70        # 感知置信度低于此值则升级到视觉模型
+  fallback_enabled: false
+  fallback_min_confidence: 0.7
   fallback_on_list_view: true          # 判为列表视图(未进入会话)时也升级一次确认
 
+  enable_thinking: false
 # ============================================
 # 文本模型配置（用于生成回复）
 # ============================================
 text_model:
-  provider: "openai_compatible"
-  base_url: "https://your-endpoint/v1"
-  api_key: "sk-xxx"
+  provider: "openai_compatible"        # 提供商
+  base_url: "https://llm-b1hoacm0oh3hm1oa.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+  api_key: "sk-你的密钥"
   api_key_required: true               # 需要密钥
-  model: "your-text-model"
-  timeout_seconds: 20                  # 文本模型超时(秒)：快速失败，避免慢接口把单轮拖长
-  temperature: 0.2
-  max_tokens: 1200
+  model: qwen3.8-27b
+  timeout_seconds: 20                  # 文本模型超时(秒)：快速失败，避免慢接口把单轮拖到 30~40s(原110)
+  temperature: 0.2                     # 温度 (0-1)
+  max_tokens: 1200                     # 最大Token数
 
+  enable_thinking: false
 # ============================================
 # 微信设置
 # ============================================
@@ -53,46 +56,95 @@ wechat:
   window_title_keywords:               # 微信窗口标题关键词
     - "微信"
     - "WeChat"
-  system_contacts:                     # 系统联系人（自动忽略，不自动回复）
+  system_contacts:                     # 系统联系人（自动忽略）
     - "微信支付"
+    - "微信游戏"
+    - "服务号"
+    - "公众号"
+    - "订阅号"
     - "微信团队"
-    - "文件传输助手"
-  enable_rpa_send: true                # 是否开启自动发送
+    - "QQ邮箱提醒"
+    - "妈咪"
+    - "爸比"
+    - "老爸"
+    - "老妈"
+  enable_rpa_send: true
   capture_backend: "printwindow"       # 截屏后端: printwindow/gdi
   background_mode_enabled: true        # 后台模式
-  offscreen: false                     # 屏外挂机模式（true=最小化时转为屏外可见；run.py --offscreen 会强制覆盖）
-  background_mode_strategy: "managed_display"
-  managed_display_required: true
-  managed_display_device: ""
-  managed_display_window_width: 900
-  managed_display_window_height: 680
-  background_send_enabled: true
-  background_text_clipboard_paste_enabled: true
-  foreground_keyboard_mode: efficiency # efficiency/comfort
+  # 提速⑤：空闲轮询间隔。observe_service._run_loop 每轮读取此键；
+  # 2.0→1.0 让启动后首扫与新消息响应更快（每轮另含 3~5s 截图+OCR 本身耗时）。
+  idle_sleep_seconds: 2.0
+  cycle_sleep_seconds: 0.5
+  offscreen: false                      # 屏外挂机模式（true=最小化时转为屏外可见，绝不闪现桌面；run.py --offscreen 会强制覆盖为 true）
+  background_mode_strategy: "managed_display"  # 后台策略
+  managed_display_required: true       # 需要虚拟显示器
+  managed_display_device: ""            # 虚拟显示器设备
+  managed_display_window_width: 900    # 微信窗口宽度
+  managed_display_window_height: 680   # 微信窗口高度
+  background_send_enabled: true        # 后台发送
+  background_text_clipboard_paste_enabled: true  # 剪贴板粘贴
+  foreground_keyboard_mode: efficiency
   input_box_click_ratio_x: 0.68        # 输入框X位置比例
-  input_box_click_ratio_y: 0.9
-  send_click_delay_seconds: 0.15
-  between_messages_delay_seconds: 1.2
-  auto_open_unread: true
-  recognition_mode: double_click_pin   # 识别模式: double_click_pin=双击置顶未读 / red_dot=红点直点
-  open_unread_delay_seconds: 0.8       # 点击未读后等待微信切换到会话视图的时长(避免截到列表)
-  ocr_region_filter_enabled: true
-  ocr_region_fallback_enabled: true
-  ocr_reply_stabilize_enabled: true
-  ocr_reply_stable_frames: 1
-  ocr_group_sender_split_enabled: true
-  contact_blacklist:                   # 不自动回复的联系人（内置默认已自动生效，可在此追加）
+  input_box_click_ratio_y: 0.9         # 输入框Y位置比例
+  send_click_delay_seconds: 0.15       # 发送点击延迟
+  between_messages_delay_seconds: 1.2  # 消息间隔
+  auto_open_unread: true               # 自动打开未读
+  recognition_mode: double_click_pin
+  open_unread_delay_seconds: 0.8        # 点击未读后等待微信切换到会话视图的时长(避免截到列表)
+  ocr_region_filter_enabled: true      # OCR区域过滤
+  ocr_region_fallback_enabled: true    # OCR回退策略
+  ocr_reply_stabilize_enabled: true    # 回复稳定化
+  ocr_reply_stable_frames: 1           # 稳定帧数
+  ocr_group_sender_split_enabled: true  # 群聊发送者分割
+  contact_blacklist:                   # 联系人黑名单（这些人不自动回复，用户可继续自定义追加）
+    # —— 以下为软件内置默认黑名单，已自动生效，无需重复填写 ——
+    # 电商/外卖/出行/短视频：拼多多, 瑞幸咖啡, 美团, 饿了么, 滴滴, 抖音, 快手, 京东, 淘宝, 天猫
+    # 公众号/订阅号/服务号/微信系统号：订阅号, 服务号, 公众号, 微信团队, 微信支付, 微信运动, 文件传输助手, 腾讯新闻, 腾讯文档
+    # 折叠分组/群：折叠的聊天, 群助手, 群消息
+    # 快递/物流：京东快递, 顺丰速运, 菜鸟
+    # 运营商/银行/客服号：中国移动, 中国联通, 中国电信, 10086, 10000, 95588
+    # 支付：支付宝
     - "拼多多"
+    - "瑞幸咖啡"
     - "美团"
+    - "饿了么"
+    - "滴滴"
+    - "抖音"
+    - "快手"
+    - "京东"
+    - "淘宝"
+    - "天猫"
+    - "订阅号"
+    - "服务号"
+    - "公众号"
+    - "微信团队"
+    - "微信支付"
+    - "微信运动"
     - "文件传输助手"
-  evidence_gate_enabled: false         # 证据门控总开关（true=回复须有业务依据才自动发）
-  merge_reply_segments: true
-  handoff_trouble: true
-  group_reply: true                    # 群聊是否自动回复
-  require_mention: true                # 群聊是否仅@才回复
-  allowed_groups: []                   # 允许回复的群（空=全部）
-  mention_names: []                    # 群内被@才回复的昵称
+    - "腾讯新闻"
+    - "腾讯文档"
+    - "折叠的聊天"
+    - "群助手"
+    - "群消息"
+    - "京东快递"
+    - "顺丰速运"
+    - "菜鸟"
+    - "中国移动"
+    - "中国联通"
+    - "中国电信"
+    - "10086"
+    - "10000"
+    - "95588"
+    - "支付宝"
+    # ↑ 在此列表下方继续追加你自己的黑名单联系人即可（一行一个，带引号）
+  evidence_gate_enabled: false         # 证据门控总开关（true=回复必须有业务依据才自动发）
 
+  merge_reply_segments: true
+  handoff_trouble: false
+  group_reply: false
+  require_mention: false
+  allowed_groups: []
+  mention_names: []
 # ============================================
 # 自然回复设置
 # ============================================
@@ -100,40 +152,42 @@ natural_reply:
   enabled: true
   use_casual_you: true                 # 使用"你"而非"您"
   segment_send_enabled: true           # 分段发送
-  max_segments: 2
-  max_send_segments: 3
-  max_chars_per_segment: 64
-  segment_delay_min_seconds: 0.8
-  segment_delay_max_seconds: 1.8
-  compose_pause_enabled: true
-  compose_pause_min_seconds: 0.35
-  compose_pause_max_seconds: 1.5
-  compose_pause_per_char_seconds: 0.025
+  max_segments: 2                      # 最大段数
+  max_send_segments: 3                 # 最大发送段数
+  max_chars_per_segment: 64            # 每段最大字数
+  segment_delay_min_seconds: 0.8       # 段间最短延迟
+  segment_delay_max_seconds: 1.8       # 段间最长延迟
+  compose_pause_enabled: true          # 模拟打字停顿
+  compose_pause_min_seconds: 0.35      # 最短停顿
+  compose_pause_max_seconds: 1.5       # 最长停顿
+  compose_pause_per_char_seconds: 0.025  # 每字停顿
 
 # ============================================
 # RAG 知识库配置
 # ============================================
 rag:
   enabled: true
-  chunk_chars: 900                     # 分块大小（对应 settings 字段 chunk_chars）
-  chunk_overlap_chars: 120             # 重叠大小（chunk_overlap_chars）
+  chunk_chars: 900                     # 分块大小
+  chunk_overlap_chars: 120             # 重叠大小
   top_k: 5                             # 检索数量
-  min_score: 0.18                      # 最小匹配分（min_score；注意这是 lexical 召回阈值，非余弦）
-  embedding_provider: "local_hash"     # 嵌入提供商（local_hash=本地关键词召回，无需 API）
-  embedding_dimensions: 384
-  embedding_base_url: ""
-  embedding_api_key: ""
-  embedding_model: ""
-  embedding_timeout_seconds: 30
+  min_score: 0.18                      # 最小匹配分
+  embedding_provider: "local_hash"     # 嵌入提供商
+  embedding_dimensions: 384            # 嵌入维度
+  embedding_base_url: ""               # 嵌入API地址
+  embedding_api_key: ""                # 嵌入API密钥
+  embedding_model: ""                  # 嵌入模型
+  embedding_timeout_seconds: 30        # 嵌入超时
 
 # ============================================
-# 回复规则（命中关键词直出回复，不问模型）
+# 回复规则（对应原版「回复规则」页签）
 # ============================================
 reply_rules:
-  keyword_reply:
+  keyword_reply:                          # 关键词规则：命中则直出回复，不问模型
     - "价格,多少钱,报价,费用 => 您好，基础版 199 元/月，支持自动接待、键入门店、知识库问答。"
+    - "版本,有哪些版本,什么版本 => 我们提供体验版、标准版和旗舰版，具体区别可以发您一份对比资料。"
+    - "功能介绍,有什么用,能做,怎么用 => 我这边能自动接待客户、识别未读消息、按关键词自动回复，还能接入您自己的知识库。"
     - "在吗,在不,你好,您好 => 您好，在的，请问有什么可以帮您？"
-  skip_contacts:                       # 额外跳过联系人（与 wechat.contact_blacklist 同步）
+  skip_contacts:                          # 额外跳过联系人（系统/自家人/无关人）
     - "文件传输助手"
     - "小助手"
 
@@ -141,8 +195,8 @@ reply_rules:
 # 安全设置
 # ============================================
 safety:
-  send_mode: "normal"                  # [未读取] 发送模式
-  min_confidence_to_reply: 0.6         # 最小回复置信度（SendGuard 读取）
+  send_mode: "normal"                  # 发送模式
+  min_confidence_to_reply: 0.6          # 最小回复置信度
   block_system_contacts: true          # 屏蔽系统联系人
   block_ads: true                      # 屏蔽广告
   block_payment_notices: true          # 屏蔽支付通知
@@ -151,38 +205,37 @@ safety:
 # 助手行为设置
 # ============================================
 assistant:
-  auto_loop_enabled: true
-  loop_interval_seconds: 5
-  online_fast_mode_enabled: true
-  idle_loop_interval_seconds: 2.0
-  active_loop_interval_seconds: 0.0
-  human_like_min_delay_seconds: 2
-  human_like_max_delay_seconds: 8
-  skip_cycle_when_no_unread: true
+  auto_loop_enabled: true              # 自动循环
+  loop_interval_seconds: 5             # 循环间隔
+  online_fast_mode_enabled: true       # 在线快速模式
+  idle_loop_interval_seconds: 2.0      # 空闲间隔
+  active_loop_interval_seconds: 0.0   # 活跃间隔
+  human_like_min_delay_seconds: 2      # 人类化最短延迟
+  human_like_max_delay_seconds: 8      # 人类化最长延迟
+  skip_cycle_when_no_unread: true      # 无未读时跳过
 
 # ============================================
-# UI 设置
+# UI设置
 # ============================================
 ui:
-  theme: "light"                       # [未读取] 主题: light/dark
-  compact_mode: true                   # [未读取] 紧凑模式
-  log_level: "normal"                  # [未读取] 日志级别
-  auto_start: false                    # 开机自启
-  auto_update_check: true             # 自动检查更新
-  screenshot_retention_days: 7         # 截图保留天数
+  theme: "light"                       # 主题: light/dark
+  compact_mode: true                   # 紧凑模式
+  log_level: "normal"                  # 日志级别
 
+  auto_start: false
+  auto_update_check: false
+  screenshot_retention_days: 7
 # ============================================
-# 业务信息（注入 AI 回复提示词的店铺上下文）
+# 业务信息（AI 回复提示词注入的店铺上下文）
 # ============================================
 business:
   business_profile:
-    brand_name: "客服助手"             # 品牌名（AI 自我介绍用）
+    brand_name: "客服助手"             # 你的品牌名（AI 自我介绍用）
   store_address: ""                    # 店铺地址（关键词回复会自动附加）
-  identity_text: ""                    # 业务身份介绍（设置页"业务资料"写入此处）
 
+  identity_text: ""
 # ============================================
-# 知识库根目录（RAG 读取此目录下的 .md/.txt/.json/.csv）
-# 注意：运行时读取键为 knowledge.root（非顶层 knowledge_root）
+# 知识库（FAQ 问答库：knowledge_root/text/02_standard_qa.md）
 # ============================================
 knowledge:
   root: "data/knowledge"
@@ -193,26 +246,41 @@ knowledge:
 friend_requests:
   max_per_cycle: 3
   check_interval_seconds: 30
-  auto_accept: true                    # 自动通过好友
-  accept_mode: accept_all              # accept_all/keyword_only
-  keyword_rules: []                    # 仅通过含关键词的申请
-  send_welcome: true                   # 通过后立即发欢迎语
-  welcome_text: ""
 
+  # 只聊天模式：关闭后主循环完全跳过好友申请链（不探测通讯录红点、
+  # 不切通讯录页），助手只做聊天回复（observe_service.py:_maybe_accept_friend_requests）
+  auto_accept: false
+  accept_mode: accept_all
+  keyword_rules: []
+  send_welcome: false
+  welcome_text: ""
 # ============================================
 # 跳过联系人（提示词构建用，与 reply_rules.skip_contacts 同步）
 # ============================================
 skip_contacts:
   - "文件传输助手"
   - "小助手"
-
 voice_messages:
-  auto_convert_to_text: true           # 语音消息自动转文字
+  auto_convert_to_text: false
 
 quote_reply:
-  enabled: false                       # 引用回复
+  enabled: false
 
 reply_fallback:
-  enabled: true                        # 无知识库命中时的兜底闲聊
+  enabled: false
+min_confidence_to_reply: 0.0
 
-min_confidence_to_reply: 0.6           # 顶层最小回复置信度（与 safety 段同义，SendGuard 读取）
+# ============================================
+# 虚拟显示器隔离（可选，需先以管理员安装 usbmmidd_v2 驱动）
+# 启用后微信停放在虚拟屏，与用户主屏光标完全隔离，彻底杜绝"用户一动鼠标点失效"。
+# 驱动安装（管理员 CMD）：
+#   cd C:\Windows\System32\DriverStore\usbmmidd_v2
+#   deviceinstaller64 install usbmmidd.inf usbmmidd
+#   deviceinstaller64 enableidd 1
+# 若驱动未装/未以管理员运行，程序会自动降级为「屏外保活 + 空闲门控」，不会崩溃。
+# ============================================
+vdd_enabled: false
+target_display_count: 1
+virtual_display_width: 1920
+virtual_display_height: 1080
+virtual_display_refresh: 60

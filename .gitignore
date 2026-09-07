@@ -35,7 +35,10 @@ config.yaml
 # --- 运行数据 / 日志 / 隐私（含 agent.db、聊天记录、线索、截图等） ---
 logs/
 *.log
-data/
+data/*
+# 例外：RAG 知识库需随仓库分发（不含运行数据库 agent.db / 聊天记录等）
+!data/knowledge/
+!data/knowledge/**
 current_watch/
 outputs/
 screenshots/
