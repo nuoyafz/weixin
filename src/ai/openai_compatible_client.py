@@ -148,6 +148,9 @@ class OpenAICompatibleClient:
         self._model = self._config.get("model", "gpt-4o-mini")
         self._temperature = self._config.get("temperature", 0.7)
         self._max_tokens = self._config.get("max_tokens", 4096)
+        # 修复#3：超时可配置，默认 45s。原先硬编码 120s 太长——
+        # 单次失败调用会把整轮拖住，且停止助手后难以及时中断。
+        self._timeout = self._config.get("timeout_seconds", 45) or 45
 
     def chat(self, messages: list[dict[str, Any]],
              model: str = None, base_url: str = None, api_key: str = None,
@@ -166,6 +169,10 @@ class OpenAICompatibleClient:
         model = model or self._model
         temperature = kwargs.get("temperature", self._temperature)
         max_tokens = kwargs.get("max_tokens", self._max_tokens)
+        # 修复#3：优先用调用方显式超时，其次构造时配置，兜底 45s。
+        timeout = kwargs.get("timeout") or self._timeout
+        if not base_url:
+            raise ModelCallError("openai_compatible: base_url is not configured")
         result = {
             "success": False,
             "content": "",
@@ -188,19 +195,24 @@ class OpenAICompatibleClient:
             }
             if use_response_format_json:
                 payload["response_format"] = {"type": "json_object"}
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
             if resp.status_code == 200:
                 data = resp.json()
-                choice = data.get("choices", [{}])[0]
+                # 边界：choices 可能为空列表，原 ([{}])[0] 写法在空列表时越界崩。
+                choice = (data.get("choices") or [{}])[0]
                 result["success"] = True
-                result["content"] = choice.get("message", {}).get("content", "")
+                result["content"] = (choice.get("message") or {}).get("content", "")
                 result["usage"] = data.get("usage", {})
-            else:
-                result["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                return result
+            # 修复#4：HTTP 错误与网络异常统一抛 ModelCallError。
+            # 原先错误被吞进 result["error"] 静默返回，导致 model_router 里
+            # 针对 ModelCallError 的重试分支成为死代码、失败不重试。
+            result["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            raise ModelCallError(result["error"])
+        except ModelCallError:
+            raise
         except Exception as e:
-            result["error"] = str(e)
-
-        return result
+            raise ModelCallError(str(e))
 
     def chat_with_image(self, messages: list[dict[str, Any]],
                         image_base64: str = "",

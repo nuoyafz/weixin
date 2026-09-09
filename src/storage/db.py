@@ -10,6 +10,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, List
 
+# 落库前过滤微信日期/时间分隔线与系统提示，复用 parser 的判定（单一事实来源，避免正则漂移）。
+try:
+    from ..message.parser import is_timestamp_line, is_system_line
+except Exception:  # 兜底：导入失败时仍可用，仅失去时间戳过滤
+    is_timestamp_line = None
+    is_system_line = None
+
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_DB = _SCRIPTS_DIR / "data" / "agent.db"
 
@@ -272,6 +279,12 @@ def save_chat_session(contact: str, messages, contact_key: str = "",
         text = _msg_text(m)
         if not text:
             continue
+        # 过滤微信日期/时间分隔线（如「星期五 11:13」）与系统提示（撤回/拍一拍等），
+        # 它们不是真实聊天内容，落库会污染历史记录。
+        if is_timestamp_line and is_timestamp_line(text):
+            continue
+        if is_system_line and is_system_line(text):
+            continue
         side = str(_msg_field(m, "side", "") or "").strip().lower()
         sender = str(_msg_field(m, "sender", "") or "").strip()
         if not side:
@@ -307,15 +320,26 @@ def list_chat_sessions(limit: int = 100, offset: int = 0,
         offset = max(0, int(offset or 0))
     except Exception:
         offset = 0
-    sql = ("SELECT s.*, (SELECT m.content FROM chat_messages m "
-           "WHERE m.session_id=s.id ORDER BY m.id DESC LIMIT 1) AS preview "
-           "FROM chat_sessions s ")
-    args: list = []
+    # 同一联系人每轮识别都会新建 session，若直接全量列出会出现「重复联系人卡片」。
+    # 这里按 contact_key 分组，每个联系人只保留最新一条 session 作为历史卡片；
+    # contact_key 为空时（未知联系人）用 id 各自成组，避免不同未知会话被错误合并。
+    inner_filter = ""
+    inner_args: list = []
     if contact_key:
-        sql += "WHERE s.contact_key=? "
-        args.append(contact_key)
-    sql += "ORDER BY s.id DESC LIMIT ? OFFSET ?"
-    args += [limit, offset]
+        inner_filter = "WHERE x.contact_key=? "
+        inner_args.append(contact_key)
+    sql = (
+        "SELECT s.*, (SELECT m.content FROM chat_messages m "
+        "WHERE m.session_id=s.id ORDER BY m.id DESC LIMIT 1) AS preview "
+        "FROM chat_sessions s "
+        "WHERE s.id IN ("
+        "  SELECT MAX(x.id) FROM chat_sessions x " + inner_filter +
+        "  GROUP BY CASE WHEN x.contact_key IS NULL OR x.contact_key='' "
+        "    THEN 'u_'||x.id ELSE x.contact_key END"
+        ") "
+        "ORDER BY s.id DESC LIMIT ? OFFSET ?"
+    )
+    args = inner_args + [limit, offset]
     with _get_conn() as conn:
         return [dict(r) for r in conn.execute(sql, args).fetchall()]
 
@@ -334,6 +358,65 @@ def get_chat_session(session_id) -> Optional[dict]:
             "SELECT side,sender,content,msg_type,created_at FROM chat_messages "
             "WHERE session_id=? ORDER BY id", (sid,)).fetchall()
         return {"session": dict(row), "messages": [dict(m) for m in msgs]}
+
+
+def effect_stats(days: int = 1, follow_minutes: int = 30) -> dict:
+    """回复效果统计（产品 P1）：
+    - replies_today: 今天有助手回复的会话数
+    - continued / continued_rate: 回复后 follow_minutes 分钟内同联系人又来消息 = 继续对话
+    - active_contacts_7d: 近 7 天有会话的联系人去重数
+    - hourly: 今日各小时回复量（画迷你柱状用）
+    """
+    from datetime import datetime, timedelta
+    out = {"replies_today": 0, "continued": 0, "continued_rate": 0.0,
+           "active_contacts_7d": 0, "hourly": [0] * 24}
+    try:
+        with _get_conn() as conn:
+            today = datetime.now().strftime("%Y-%m-%d")
+            week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+            rows = conn.execute(
+                "SELECT id, contact_key, contact, created_at, reply_text FROM chat_sessions "
+                "WHERE reply_text != '' ORDER BY id").fetchall()
+            # 每联系人的全部会话时间线（用于判定"回复后是否又来消息"）
+            tl: dict = {}
+            for r in conn.execute(
+                    "SELECT id, contact_key, contact, created_at FROM chat_sessions "
+                    "WHERE created_at >= ? ORDER BY id", (week_ago,)).fetchall():
+                k = str(r["contact_key"] or r["contact"] or ("u_" + str(r["id"])))
+                tl.setdefault(k, []).append(str(r["created_at"]))
+            from datetime import datetime as _dt
+            def _parse(s):
+                try:
+                    return _dt.strptime(s, "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    return None
+            for r in rows:
+                ts = str(r["created_at"] or "")
+                if not ts.startswith(today):
+                    continue
+                out["replies_today"] += 1
+                try:
+                    out["hourly"][int(ts[11:13])] += 1
+                except Exception:
+                    pass
+                k = str(r["contact_key"] or r["contact"] or ("u_" + str(r["id"])))
+                base = _parse(ts)
+                if base is None:
+                    continue
+                later = [_parse(x) for x in tl.get(k, [])]
+                later = [x for x in later if x and x > base
+                         and (x - base).total_seconds() <= follow_minutes * 60]
+                if later:
+                    out["continued"] += 1
+            if out["replies_today"]:
+                out["continued_rate"] = round(out["continued"] / out["replies_today"], 3)
+            out["active_contacts_7d"] = conn.execute(
+                "SELECT COUNT(DISTINCT CASE WHEN contact_key IS NULL OR contact_key='' "
+                "THEN 'u_'||id ELSE contact_key END) FROM chat_sessions "
+                "WHERE created_at >= ?", (week_ago,)).fetchone()[0]
+    except Exception:
+        return out
+    return out
 
 
 def clear_chat_history(contact_key: str = "") -> int:

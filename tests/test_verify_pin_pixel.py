@@ -84,8 +84,11 @@ def test_pixel_fallback_when_before_frame_has_no_badge():
 
     新语义（用户要求：识别失败立即重采一次，第二次仍失败才降级 OCR）：
     这里让重采帧同样无徽章，模拟「过渡帧确实落空」的真实失败场景。
+    帧预算：重采上限 4 次（2026-09-08 提速：覆盖双击置顶 2s 动画窗口）
+    + 降级 OCR 3 次重扫 = 8 帧。此前喂 4 帧会被重采耗尽、OCR 循环
+    scanned=False 误返 unknown。
     """
-    det, calls = _make_detector([_frame_without_badge()] * 4)
+    det, calls = _make_detector([_frame_without_badge()] * 8)
     status, after = det._verify_pin_success(
         0, W, H, None, 1, before_img=_frame_without_badge())
     # 降级后 OCR 桩恒返回 1 == before=1 -> 未读未减少 -> fail

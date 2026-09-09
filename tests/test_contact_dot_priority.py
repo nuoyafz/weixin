@@ -55,8 +55,12 @@ def test_contact_dot_priority_over_current_chat():
         return np.zeros((1317, 2002, 3), dtype=np.uint8)
     def fake_scan_nav(img):
         return None  # 无 nav 未读数字
+    _scan_n = {"n": 0}
     def fake_scan_contact(img):
-        return [make_dot(167)]  # 方舟：没数字、面积 40（低于严格阈值 60）
+        _scan_n["n"] += 1
+        if _scan_n["n"] == 1:
+            return [make_dot(167)]  # 方舟：没数字、面积 40（低于严格阈值 60）
+        return []  # 点击该未读会话后其未读已清零
     def fake_pick(hw, dots, img, win_w, wm):
         calls["picked"] = [dd["center_y"] for dd in dots]
         # 模拟成功点击最顶红点
@@ -68,7 +72,7 @@ def test_contact_dot_priority_over_current_chat():
         return True
     def fake_pin(hw, w, h, wm):
         return True
-    def fake_top(hw, w, h, wm, nav_num=None):
+    def fake_top(hw, w, h, wm, nav_num=None, img=None):
         return {"found": True, "clicked": False, "kind": "nav_badge",
                 "reason": "unused"}
 

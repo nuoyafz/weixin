@@ -381,8 +381,13 @@ class WechatScreenReader:
         return self._ocr
 
     # -- 主入口 ---------------------------------------------------------
-    def analyze(self, image: Any) -> ChatAnalysis:
-        """分析一张聊天窗口截图，返回结构化结果。"""
+    def analyze(self, image: Any, *, roi_cropped: bool = False) -> ChatAnalysis:
+        """分析一张聊天窗口截图，返回结构化结果。
+
+        roi_cropped: 该帧已由 observe_service 做过 ROI 裁剪（裁掉顶部窗口标题栏）。
+          为 True 时关闭「顶部 4.5% 标题栏过滤」，避免把本就在帧顶的联系人名
+          误判为窗口标题栏而丢弃（详见 _extract_contact 中 top_bar_y 的处理）。
+        """
         arr = self._to_array(image)
         h, w = arr.shape[:2]
         analysis = ChatAnalysis(image_size=(w, h))
@@ -419,7 +424,8 @@ class WechatScreenReader:
         analysis.anchors = anchors
 
         # 4) 头部联系人（仅取聊天区内、非低置信行）
-        analysis.current_contact = self._extract_contact(lines, anchors, h, w)
+        analysis.current_contact = self._extract_contact(
+            lines, anchors, h, w, roi_cropped=roi_cropped)
 
         # 5) 输入草稿
         analysis.draft_text = self._extract_draft(lines, anchors, w)
@@ -530,7 +536,8 @@ class WechatScreenReader:
 
     # -- 头部联系人 -----------------------------------------------------
     def _extract_contact(self, lines: List[_OcrLine], anchors: LayoutAnchors,
-                         h: int = 0, w: int = 0) -> str:
+                         h: int = 0, w: int = 0, *,
+                         roi_cropped: bool = False) -> str:
         """头部联系人：仅取聊天区内、非低置信、位于头部带的行。
 
         必须排除：
@@ -548,7 +555,9 @@ class WechatScreenReader:
             h = (anchors.header_bottom * 10) if anchors else 0
         if w <= 0:
             w = (anchors.chat_right * 2) if anchors else 0
-        top_bar_y = h * 0.045          # 窗口标题栏（含 ×/口 按钮）通常 <= 4.5% 高度
+        # 帧已被 ROI 裁掉顶部窗口标题栏时，关闭该过滤（top_bar_y=0），否则会把本就
+        # 在帧顶的联系人名误判为标题栏而丢弃。未裁剪时仍按 4.5% 跳过 OS 标题栏。
+        top_bar_y = 0 if roi_cropped else h * 0.045
         far_right_x = w * 0.96         # 不与右上角 ×/口 控制按钮重叠
         header_bottom = anchors.header_bottom if anchors else int(h * 0.10)
         chat_left = anchors.chat_left if anchors else int(w * 0.28)

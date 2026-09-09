@@ -176,6 +176,13 @@ def check_from_config(config_path: str = "config.yaml",
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
+        # 修复#1 配套：api_key 可能写成 ${VAR} 占位（密钥已外置到 .env/环境变量），
+        # 必须展开成真实值再用来请求，否则连通性检查会拿占位串去鉴权必然失败。
+        try:
+            from ..config.settings import expand_env_config
+            cfg = expand_env_config(cfg)
+        except Exception:
+            pass
     except Exception:
         return None
     tm = (cfg.get("text_model") or {}) if isinstance(cfg, dict) else {}

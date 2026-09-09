@@ -10,7 +10,7 @@ config.yaml 的 ai 段示例：
       text:
         provider: openai_compatible
         base_url: "https://api.deepseek.com/v1"
-        api_key: "sk-xxx"
+        api_key: "YOUR_API_KEY"
         model: "deepseek-chat"
         temperature: 0.2
         max_tokens: 1200
@@ -77,6 +77,13 @@ class ModelSettings:
         if self.config_path.exists():
             with open(self.config_path, "r", encoding="utf-8") as f:
                 raw = yaml.safe_load(f) or {}
+            # 修复#1 配套：展开 ${VAR} 占位（密钥已外置到 .env/环境变量），
+            # 否则这里拿到的 api_key 是占位串，无法用于真实调用。
+            try:
+                from ..config.settings import expand_env_config
+                raw = expand_env_config(raw)
+            except Exception:
+                pass
 
         ai = raw.get("ai")
         if isinstance(ai, dict):
@@ -104,7 +111,8 @@ class ModelSettings:
             api_key_required=bool(data.get("api_key_required", False)),
             temperature=float(data.get("temperature", 0.2)),
             max_tokens=int(data.get("max_tokens", 1200)),
-            timeout_seconds=int(data.get("timeout_seconds", 110)),
+            # 超时默认值收敛(原110)：与主链路口径一致
+            timeout_seconds=int(data.get("timeout_seconds", 45) or 45),
         )
         backup = data.get("backup")
         if isinstance(backup, dict):

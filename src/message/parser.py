@@ -3,6 +3,7 @@ import time
 from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass, field
 from enum import Enum
+from collections import Counter
 import numpy as np
 
 
@@ -50,6 +51,39 @@ class ChatMessage:
         return f"{self.side.value}_{self.sender}_{self.content[:30]}_{self.timestamp}"
 
 
+# 微信日期/时间分隔线模式（如「星期五 11:13」「今天 14:30」「2024/1/1」）。
+# 抽成模块级函数，供 storage 层落库前过滤，避免与下方 MessageParser 方法各写一份导致漂移。
+_TIMESTAMP_PATTERNS = [
+    r'^\d{1,2}:\d{2}$',
+    r'^\d{1,2}:\d{2}:\d{2}$',
+    r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}',
+    r'昨天\s*\d{1,2}:\d{2}',
+    r'今天\s*\d{1,2}:\d{2}',
+    r'上午\s*\d{1,2}:\d{2}',
+    r'下午\s*\d{1,2}:\d{2}',
+    r'晚上\s*\d{1,2}:\d{2}',
+    r'星期[一二三四五六日天]',
+]
+
+# 微信系统提示（非聊天内容，落库时应剔除）。
+_SYSTEM_KEYWORDS = ["撤回了一条消息", "拍了拍", "同意了好友验证", "开启了朋友验证"]
+
+
+def is_timestamp_line(text: str) -> bool:
+    """判断一行文本是否为微信日期/时间分隔线（如「星期五 11:13」）。"""
+    if not text:
+        return False
+    t = text.strip()
+    return any(re.match(p, t) for p in _TIMESTAMP_PATTERNS)
+
+
+def is_system_line(text: str) -> bool:
+    """判断一行文本是否为微信系统提示（撤回/拍一拍等）。"""
+    if not text:
+        return False
+    return any(kw in text for kw in _SYSTEM_KEYWORDS)
+
+
 class MessageParser:
     BUBBLE_COLOR_THRESHOLD = 100
     UNREAD_MARKER_KEYWORDS = ["以下为新消息", "你以上是新消息", "以下为未读消息"]
@@ -62,6 +96,11 @@ class MessageParser:
         ]
         self._known_contacts: Dict[str, ContactInfo] = {}
         self._last_processed_fingerprints: set = set()
+        # 同指纹「已处理条数」计数（wxautopc Counter 思路）：
+        # 微信连续消息不每条都带时间戳，客户同一分钟内连发两句「在吗」
+        # 会生成完全相同的指纹；只按 set 判「处理过就不再处理」，会把
+        # 第二条永久吞掉。改为按「本轮出现次数 - 已处理次数」放行。
+        self._processed_counts: Counter = Counter()
         self._max_history = 100
 
     def parse_chat_screenshot(self, image: np.ndarray,
@@ -190,27 +229,10 @@ class MessageParser:
         return messages
 
     def _is_timestamp(self, text: str) -> bool:
-        patterns = [
-            r'^\d{1,2}:\d{2}$',
-            r'^\d{1,2}:\d{2}:\d{2}$',
-            r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}',
-            r'昨天\s*\d{1,2}:\d{2}',
-            r'今天\s*\d{1,2}:\d{2}',
-            r'上午\s*\d{1,2}:\d{2}',
-            r'下午\s*\d{1,2}:\d{2}',
-            r'晚上\s*\d{1,2}:\d{2}',
-            r'星期[一二三四五六日天]',
-        ]
-        for pattern in patterns:
-            if re.match(pattern, text.strip()):
-                return True
-        return False
+        return is_timestamp_line(text)
 
     def _is_system_message(self, text: str) -> bool:
-        for kw in self.SYSTEM_KEYWORDS:
-            if kw in text:
-                return True
-        return False
+        return is_system_line(text)
 
     def _is_unread_marker(self, text: str) -> bool:
         for kw in self.UNREAD_MARKER_KEYWORDS:
@@ -244,8 +266,28 @@ class MessageParser:
 
     def identify_unread_messages(self, messages: List[ChatMessage],
                                    last_processed_fingerprint: str = "") -> List[ChatMessage]:
-        unread = []
+        unread: List[ChatMessage] = []
         found_unread_marker = False
+
+        # 本轮各指纹出现次数（wxautopc Counter 思路）。
+        # 背景：微信连续消息不每条都带时间戳，客户同一分钟内连发两句
+        # 「在吗」会生成完全相同的指纹；旧逻辑按 set 判「处理过就不再
+        # 处理」，第二条被永久吞掉。改为按（本轮出现次数 - 已处理次数）
+        # 放行，既能放行重复内容的新消息，又不会跨轮重复处理同一条。
+        batch_counts: Counter = Counter()
+        for msg in messages:
+            if msg.content == "__UNREAD_MARKER__":
+                continue
+            if msg.side == MessageSide.OTHER and msg.content:
+                batch_counts[msg.fingerprint()] += 1
+        emitted: Counter = Counter()
+
+        def _take(msg: "ChatMessage") -> bool:
+            fp = msg.fingerprint()
+            if self._processed_counts.get(fp, 0) + emitted[fp] >= batch_counts[fp]:
+                return False
+            emitted[fp] += 1
+            return True
 
         for msg in messages:
             if msg.content == "__UNREAD_MARKER__":
@@ -254,11 +296,11 @@ class MessageParser:
 
             if found_unread_marker:
                 if msg.side == MessageSide.OTHER and msg.content:
-                    if msg.fingerprint() not in self._last_processed_fingerprints:
+                    if _take(msg):
                         unread.append(msg)
             elif not last_processed_fingerprint:
                 if msg.side == MessageSide.OTHER and msg.content:
-                    if msg.fingerprint() not in self._last_processed_fingerprints:
+                    if _take(msg):
                         unread.append(msg)
 
         # 首次遇到该联系人且无分隔线标记时，只取最后 5 条（底部最新消息）
@@ -269,11 +311,19 @@ class MessageParser:
 
     def mark_processed(self, messages: List[ChatMessage]) -> None:
         for msg in messages:
-            self._last_processed_fingerprints.add(msg.fingerprint())
-            if len(self._last_processed_fingerprints) > self._max_history:
-                self._last_processed_fingerprints = set(
-                    list(self._last_processed_fingerprints)[-self._max_history:]
-                )
+            fp = msg.fingerprint()
+            self._last_processed_fingerprints.add(fp)
+            # 计数而非仅入集合：同一指纹出现 N 条就允许处理 N 条，
+            # 这样「客户连发两句相同的话」第二条不会被吞。
+            self._processed_counts[fp] += 1
+        # 裁剪：保留计数最高的指纹（重复内容的指纹更需要保留计数），
+        # 两个结构同步收缩，避免无限增长。
+        if len(self._processed_counts) > self._max_history:
+            keep = {fp for fp, _ in self._processed_counts.most_common(
+                self._max_history)}
+            self._processed_counts = Counter(
+                {k: v for k, v in self._processed_counts.items() if k in keep})
+            self._last_processed_fingerprints &= keep
 
     def is_system_contact(self, name: str) -> bool:
         for sys_name in self.system_contacts:

@@ -65,29 +65,11 @@ class ModelRouter:
                 {'role': 'user', 'content': user_prompt},
             ]
             try:
-                result = self.openai_client.chat(
-                    messages,
-                    model=cfg.get('model'),
-                    base_url=cfg.get('base_url'),
-                    api_key=cfg.get('api_key'),
-                    use_response_format_json=bool(cfg.get('use_response_format_json', False)),
-                    temperature=float(cfg.get('temperature', 0.2) or 0.2),
-                    max_tokens=int(cfg.get('max_tokens', 1200) or 1200),
-                    force_json=True,
-                    purpose=trace_purpose,
-                )
+                result = self._chat_openai(messages, cfg, 0.2, 1200, trace_purpose)
                 return self._retry_with_response_format_if_needed(
                     cfg, result, trace_purpose,
-                    lambda retry_cfg: self.openai_client.chat(
-                        messages,
-                        model=retry_cfg.get('model'),
-                        base_url=retry_cfg.get('base_url'),
-                        api_key=retry_cfg.get('api_key'),
-                        use_response_format_json=bool(retry_cfg.get('use_response_format_json', False)),
-                        temperature=float(retry_cfg.get('temperature', 0.2) or 0.2),
-                        max_tokens=int(retry_cfg.get('max_tokens', 1200) or 1200),
-                        force_json=True, purpose=trace_purpose,
-                    ),
+                    lambda retry_cfg: self._chat_openai(
+                        messages, retry_cfg, 0.2, 1200, trace_purpose),
                 )
             except ModelCallError as exc:
                 if not self._should_retry_without_response_format(exc, cfg):
@@ -96,16 +78,7 @@ class ModelRouter:
                 retry_cfg['use_response_format_json'] = False
                 if self.logger:
                     self.logger(f'text_reply retry_without_response_format error={exc}')
-                return self.openai_client.chat(
-                    messages,
-                    model=retry_cfg.get('model'),
-                    base_url=retry_cfg.get('base_url'),
-                    api_key=retry_cfg.get('api_key'),
-                    use_response_format_json=False,
-                    temperature=float(retry_cfg.get('temperature', 0.2) or 0.2),
-                    max_tokens=int(retry_cfg.get('max_tokens', 1200) or 1200),
-                    force_json=True, purpose=trace_purpose,
-                )
+                return self._chat_openai(messages, retry_cfg, 0.2, 1200, trace_purpose)
         if provider == 'gemini':
             return self._call_gemini_text(cfg, system_prompt + '\n\n' + user_prompt, purpose=trace_purpose)
         if provider == 'local':
@@ -113,6 +86,32 @@ class ModelRouter:
                 'text: provider=local is reserved and does not call a remote text model.'
             )
         raise ModelCallError(f"text: unsupported provider '{provider}'.")
+
+    # ------------------------------------------------------------------
+    # OpenAI 兼容调用（统一参数拼装）
+    # ------------------------------------------------------------------
+    def _chat_openai(self, messages: List[Dict[str, Any]], cfg: Dict[str, Any],
+                     default_temperature: float, default_max_tokens: int,
+                     purpose: str) -> Dict[str, Any]:
+        """统一封装 openai_client.chat 的参数拼装。
+
+        修复#9：原先「正常调用 / JSON 重试 / 无 response_format 重试」三处
+        重复拼同样 8 个参数，改一处要改三处。收敛到单点后便于统一维护，
+        顺便把超时真正传递下去（修复#3——原先从未传 timeout，落到 client
+        默认，也就是硬编码的 120s）。
+        """
+        return self.openai_client.chat(
+            messages,
+            model=cfg.get('model'),
+            base_url=cfg.get('base_url'),
+            api_key=cfg.get('api_key'),
+            use_response_format_json=bool(cfg.get('use_response_format_json', False)),
+            temperature=float(cfg.get('temperature', default_temperature) or default_temperature),
+            max_tokens=int(cfg.get('max_tokens', default_max_tokens) or default_max_tokens),
+            timeout=int(cfg.get('timeout_seconds', 45) or 45),
+            force_json=True,
+            purpose=purpose,
+        )
 
     # ------------------------------------------------------------------
     # OpenAI 兼容视觉调用
@@ -146,31 +145,14 @@ class ModelRouter:
         call_cfg = dict(cfg)
         if bool(call_cfg.get('prefer_response_format_json_first', True)):
             call_cfg['use_response_format_json'] = True
+        user_msg = [{'role': 'user', 'content': content}]
 
         try:
-            result = self.openai_client.chat(
-                [{'role': 'user', 'content': content}],
-                model=call_cfg.get('model'),
-                base_url=call_cfg.get('base_url'),
-                api_key=call_cfg.get('api_key'),
-                use_response_format_json=bool(call_cfg.get('use_response_format_json', False)),
-                temperature=float(call_cfg.get('temperature', 0.1) or 0.1),
-                max_tokens=int(call_cfg.get('max_tokens', 1800) or 1800),
-                force_json=True,
-                purpose=trace_purpose,
-            )
+            result = self._chat_openai(user_msg, call_cfg, 0.1, 1800, trace_purpose)
             result = self._retry_with_response_format_if_needed(
                 call_cfg, result, trace_purpose,
-                lambda retry_cfg: self.openai_client.chat(
-                    [{'role': 'user', 'content': content}],
-                    model=retry_cfg.get('model'),
-                    base_url=retry_cfg.get('base_url'),
-                    api_key=retry_cfg.get('api_key'),
-                    use_response_format_json=bool(retry_cfg.get('use_response_format_json', False)),
-                    temperature=float(retry_cfg.get('temperature', 0.1) or 0.1),
-                    max_tokens=int(retry_cfg.get('max_tokens', 1800) or 1800),
-                    force_json=True, purpose=trace_purpose,
-                ),
+                lambda retry_cfg: self._chat_openai(
+                    user_msg, retry_cfg, 0.1, 1800, trace_purpose),
             )
         except ModelCallError as exc:
             if not self._should_retry_without_response_format(exc, call_cfg):
@@ -179,16 +161,7 @@ class ModelRouter:
             retry_cfg['use_response_format_json'] = False
             if self.logger:
                 self.logger(f'vision_screen retry_without_response_format error={exc}')
-            result = self.openai_client.chat(
-                [{'role': 'user', 'content': content}],
-                model=retry_cfg.get('model'),
-                base_url=retry_cfg.get('base_url'),
-                api_key=retry_cfg.get('api_key'),
-                use_response_format_json=False,
-                temperature=float(retry_cfg.get('temperature', 0.1) or 0.1),
-                max_tokens=int(retry_cfg.get('max_tokens', 1800) or 1800),
-                force_json=True, purpose=trace_purpose,
-            )
+            result = self._chat_openai(user_msg, retry_cfg, 0.1, 1800, trace_purpose)
 
         self._save_vision_debug(cfg, prompt, image_path, all_image_paths, image_labels, image_payloads, result)
         return result
@@ -233,9 +206,27 @@ class ModelRouter:
             debug_file.write_text(json.dumps(debug_payload, ensure_ascii=False, indent=2), encoding='utf-8')
             if self.logger:
                 self.logger(f'vision_debug_saved path={debug_file}')
+            # 修复#6：视觉调试文件含 prompt 与客户会话内容，原先只写不清，
+            # 会无限堆积且留存隐私。这里按保留天数清理过期文件。
+            self._prune_vision_debug(debug_dir)
         except Exception as exc:
             if self.logger:
                 self.logger(f'vision_debug_save_failed error={exc}')
+
+    @staticmethod
+    def _prune_vision_debug(debug_dir: '_Path | Path', keep_days: int = 7) -> None:
+        """删除超过保留天数的视觉调试文件（默认 7 天）。"""
+        try:
+            import time as _time
+            cutoff = _time.time() - max(1, int(keep_days)) * 86400
+            for f in Path(debug_dir).glob('vision_*.json'):
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink()
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Gemini 调用
@@ -251,7 +242,8 @@ class ModelRouter:
         import requests
         api_key = str(cfg.get('api_key', '') or '').strip()
         model = str(cfg.get('model', 'gemini-2.0-flash') or 'gemini-2.0-flash').strip()
-        timeout = int(cfg.get('timeout_seconds', 110) or 110)
+        # 超时默认值收敛(原110)：与主回复链路口径一致，避免单次调用拖太久。
+        timeout = int(cfg.get('timeout_seconds', 45) or 45)
         trace_purpose = str(cfg.get('_trace_purpose') or 'vision_screen')
 
         if not api_key:
@@ -274,10 +266,14 @@ class ModelRouter:
                 'maxOutputTokens': int(cfg.get('max_tokens', 1800) or 1800),
             },
         }
-        headers = {'Content-Type': 'application/json'}
+        # 安全修复#2：api_key 不再拼进 URL query（会在网关/代理/服务端访问日志留痕），
+        # 改用官方推荐的 x-goog-api-key 请求头传递。
+        headers = {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': api_key,
+        }
         url = (
             f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
-            f'?key={api_key}'
         )
 
         started_at = time.perf_counter()
@@ -325,7 +321,8 @@ class ModelRouter:
         import requests
         api_key = str(cfg.get('api_key', '') or '').strip()
         model = str(cfg.get('model', 'gemini-2.0-flash') or 'gemini-2.0-flash').strip()
-        timeout = int(cfg.get('timeout_seconds', 110) or 110)
+        # 超时默认值收敛(原110)：与主回复链路口径一致，避免单次调用拖太久。
+        timeout = int(cfg.get('timeout_seconds', 45) or 45)
 
         if not api_key:
             raise ModelCallError('gemini text: api_key is empty.')
@@ -337,10 +334,13 @@ class ModelRouter:
                 'maxOutputTokens': int(cfg.get('max_tokens', 1200) or 1200),
             },
         }
-        headers = {'Content-Type': 'application/json'}
+        # 安全修复#2：api_key 改由 x-goog-api-key 请求头传递，不进 URL query。
+        headers = {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': api_key,
+        }
         url = (
             f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
-            f'?key={api_key}'
         )
 
         started_at = time.perf_counter()
@@ -416,9 +416,11 @@ class ModelRouter:
         retry_cfg['use_response_format_json'] = False
         if self.logger:
             self.logger(f'{purpose} retry_without_response_format: json parse failed on first attempt')
+        # 修复#5：ModelCallError 本身是 Exception 子类，原写法等价于 except Exception，
+        # 冗余且误导。重试失败时保守返回首次结果。
         try:
             return retry_fn(retry_cfg)
-        except (ModelCallError, Exception):
+        except Exception:
             return result
 
     @staticmethod

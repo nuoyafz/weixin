@@ -123,16 +123,19 @@ def test_double_click_pin_fail_fallback():
     print("PASSED: double_click_pin 真实失败(未进会话) -> 降级红点成功 ->", res.get("contact"))
 
 
-def test_double_click_pin_fail_entered_no_fallback():
-    # 验证误判（已进会话但 nav 读数滞后）：即便 verify=fail 也不得降级重击，
-    # 直接把本次成功点击返回（pin_verify=success_by_entered），避免对已清未读造成干扰。
+def test_double_click_pin_fail_entered_retry_then_fallback():
+    # 用户明确要求（red_dot_detector.py 「用户要求——继续双击置顶重试」注释）：
+    # fail 且已进会话 → 继续双击置顶重试（共 MAX_PIN_RETRY=3 次尝试），
+    # 耗尽后降级红点扫描兜底。真机日志 run_20260908_215104 实测同构流程
+    # （重试第 2 次命中 success）。
     res, calls = run_pin_scenario(
         ("fail", 3), contacts_after_pin=[{"center_y": 300, "unread_count": 1}],
         entered_after_click=True)
-    assert calls["picked"] == 0, "已进会话的 fail 误判不应触发降级红点扫描"
-    assert res.get("pin_verify") == "success_by_entered", res
-    assert res.get("clicked") is True, res
-    print("PASSED: double_click_pin 验证误判(已进会话) -> 不降级, 按成功返回 ->",
+    assert calls["pin"] == 3, f"fail+已进会话应重试满 3 次尝试，实际 {calls['pin']}"
+    assert calls["picked"] == 1, "重试耗尽后应降级红点扫描"
+    assert res.get("pin_verify") == "fallback_red_dot", res
+    assert res.get("contact") == "PICKED", res
+    print("PASSED: double_click_pin fail+已进会话 -> 重试3次 -> 降级红点 ->",
           res.get("pin_verify"))
 
 
@@ -227,7 +230,7 @@ if __name__ == "__main__":
     test_verify_pin_success_logic()
     test_double_click_pin_verify_success()
     test_double_click_pin_fail_fallback()
-    test_double_click_pin_fail_entered_no_fallback()
+    test_double_click_pin_fail_entered_retry_then_fallback()
     test_double_click_pin_fail_no_fallback()
     test_red_dot_mode()
     test_ensure_chat_list_guard_fires()

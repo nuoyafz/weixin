@@ -78,7 +78,10 @@ def test_scan_nav_badge_detects_badge_beyond_0075():
     det._read_badge_number = lambda img, box: 2   # 桩：读数字返回 2
     img = _frame()
     # 徽章须落在 2134 版扫描窗内：y ∈ [0.115H≈146, 0.17H≈216) 且 x < 0.12W≈196
+    # 真实形态：红底白字（白块居中）——红包围白校验（2026-09-08）要求
+    # 数字笔画被红色包围，实心红块会被判为假徽章弃读。
     img[155:181, 150:180] = (85, 85, 250)
+    img[163:173, 160:170] = (255, 255, 255)
     res = det._scan_nav_badge(img)
     assert res is not None, "_scan_nav_badge 应命中徽章"
     assert res.get("kind") == "nav_badge", res

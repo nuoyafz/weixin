@@ -755,8 +755,13 @@ class HtmlBridge(QObject):
     def _fresh_knowledge_base(self):
         """构造并加载一个全新的知识库实例（不复用旧缓存）。"""
         try:
-            from ..rag.knowledge_base import KnowledgeBase
-            kb = KnowledgeBase(root_path=str(self._knowledge_root()))
+            from ..rag.knowledge_base import KnowledgeBase, extra_roots_from_config, skip_unreviewed_from_config
+            cfg = self._load_yaml() if hasattr(self, "_load_yaml") else None
+            kb = KnowledgeBase(
+                root_path=str(self._knowledge_root()),
+                extra_roots=extra_roots_from_config(cfg),
+                skip_unreviewed=skip_unreviewed_from_config(cfg),
+            )
             kb.load_documents()
             return kb
         except Exception as e:  # noqa: BLE001

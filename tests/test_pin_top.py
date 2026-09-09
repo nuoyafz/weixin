@@ -3,7 +3,7 @@
 模拟：
   场景 A：双击置顶后红点仍没扫到 -> 走坐标点最顶行兜底
   场景 B：双击置顶后红点扫到了 -> 走 _pick_and_click_contact_dot 点最顶红点
-  场景 C：nav 无数字（头像噪声）-> 不双击，走原 _ensure_chat_list 单点恢复
+  场景 C：nav 无数字（仅徽章，数字被红包围白校验误杀）-> 仍双击置顶（先执行双击置顶）
 """
 import sys
 sys.path.insert(0, ".")
@@ -42,20 +42,25 @@ def test_scenario_a():
     d = make_detector()
     d._scan_nav_badge = lambda img: {"unread_count": 4, "center_x": 71, "center_y": 193}
     d._scan_contact_dots = lambda img: []  # 红点漏扫
+    # 桩：置顶生效（验证成功）。本用例只校验「路由 + 点击序列」；
+    # 「验证失败→重试3次→降级红点」策略由 test_recognition_mode 覆盖
+    # （方哥要求：验证失败继续双击置顶重试）。
+    d._verify_pin_success = (lambda hw, w, h, wm, nav_num,
+                             before_img=None: ("success", 0))
 
     res = d.find_and_click_unread(window_handle=1, wm=None)
     print("[A] result:", res["kind"], "clicked=", res["clicked"],
           "entered=", res.get("entered_conversation"), "reason=", res["reason"])
     # 行为序列：①单击聊天图标回列表 ②双击置顶 ③坐标点顶行
     assert clicks, "应当产生点击"
-    assert clicks[0] == (28, 200, False), f"首个应为单击回列表(28,200): {clicks[0]}"
-    assert clicks[1] == (28, 200, True), f"其次应为双击置顶(28,200): {clicks[1]}"
+    assert clicks[0] == (30, 200, False), f"首个应为单击回列表(30,200): {clicks[0]}"
+    assert clicks[1] == (30, 200, True), f"其次应为双击置顶(30,200): {clicks[1]}"
     assert any(c[2] for c in clicks), "应当有双击置顶动作"
     # 最终进入未读会话
     assert res["clicked"] is True, res
     assert res.get("entered_conversation") is True, res
     assert res["kind"] == "contact_dot", res
-    print("[A] PASS -> 单击(28,200) + 双击置顶(28,200) + 坐标点顶行")
+    print("[A] PASS -> 单击(30,200) + 双击置顶(30,200) + 坐标点顶行")
 
 
 def test_scenario_b():
@@ -67,7 +72,12 @@ def test_scenario_b():
     clicks = []
     d = make_detector()
 
+    _scan_n = {"n": 0}
     def fake_scan(img):
+        _scan_n["n"] += 1
+        if _scan_n["n"] == 1:
+            # 预检时刻（双击置顶前）列表尚无新红点，不触发「已在列表」跳过
+            return []
         # 置顶后，亚磊(顶) + 方舟 都出现红点
         return [
             {"center_x": 199, "center_y": 167, "area": 171, "unread_count": 1,
@@ -78,34 +88,49 @@ def test_scenario_b():
 
     d._scan_nav_badge = lambda img: {"unread_count": 2, "center_x": 71, "center_y": 193}
     d._scan_contact_dots = fake_scan
+    # 桩：置顶生效（验证成功）。本用例只校验「路由 + 点击序列」；
+    # 「验证失败→重试3次→降级红点」策略由 test_recognition_mode 覆盖
+    # （方哥要求：验证失败继续双击置顶重试）。
+    d._verify_pin_success = (lambda hw, w, h, wm, nav_num,
+                             before_img=None: ("success", 0))
+
 
     res = d.find_and_click_unread(window_handle=1, wm=None)
     print("[B] result:", res["kind"], "clicked=", res["clicked"],
           "entered=", res.get("entered_conversation"), "unread=", res.get("unread_count"))
-    # 同样：单击回列表 → 双击置顶 → 坐标点顶行，最终进入会话
-    assert clicks[0] == (28, 200, False), f"首个应为单击回列表(28,200): {clicks[0]}"
-    assert clicks[1] == (28, 200, True), f"其次应为双击置顶(28,200): {clicks[1]}"
+    # P1 后：红点已就位时 _ensure_chat_list 预检会跳过单击，直接进入双击置顶。
+    # 核心契约：无论是否经单击回列表，最终都「双击置顶(30,200) + 坐标点顶行」进入会话。
+    assert any(c[2] for c in clicks), "应当有双击置顶动作"
+    assert (30, 200, True) in clicks, f"应有双击置顶(30,200): {clicks}"
     assert res["clicked"] is True, res
     assert res.get("entered_conversation") is True, res
     assert res["kind"] == "contact_dot", res
-    print("[B] PASS -> 单击(28,200) + 双击置顶(28,200) + 坐标点顶行")
+    print("[B] PASS -> 双击置顶(30,200) + 坐标点顶行 (P1: 红点就位跳过单击)")
 
 
 def test_scenario_c():
-    """nav 无数字（头像噪声）-> 不双击，走原 _ensure_chat_list 单点。"""
+    """nav 无数字（仅徽章，数字被红包围白校验误杀）-> 仍走双击置顶主路径。
+
+    用户要求「先执行双击置顶」：检测到 nav 未读徽章即双击置顶，
+    不再因 unread_count=None 退化到红点直点；顶行红点门限(:419)兜底。
+    """
     global clicks
     clicks = []
     d = make_detector()
     d._scan_nav_badge = lambda img: {"unread_count": None, "center_x": 71, "center_y": 60}
     d._scan_contact_dots = lambda img: []
-    # _ensure_chat_list 内部会再 _capture + _scan_contact_dots，需维持桩
+    # 桩验证成功，使主路径走通可预测；重点校验「无数字 nav 仍进入双击置顶」
+    d._verify_pin_success = (lambda hw, w, h, wm, nav_num,
+                             before_img=None: ("success", 0))
     res = d.find_and_click_unread(window_handle=1, wm=None)
-    print("[C] result:", res["kind"], "reason=", res["reason"])
-    assert not any(c[2] for c in clicks), "无数字 nav 不应双击"
-    # _ensure_chat_list 用单点，且坐标应落在聊天图标(29,200)
-    single = [c for c in clicks if not c[2]]
-    assert single and single[0] == (28, 200, False), f"应单点聊天图标: {single}"
-    print("[C] PASS -> 不双击，单点聊天图标(29,200) 走原恢复逻辑")
+    print("[C] result:", res["kind"], "clicked=", res["clicked"],
+          "reason=", res["reason"])
+    # 关键：无数字 nav 仍产生双击置顶动作（而非退化为红点直点）
+    assert any(c[2] for c in clicks), "无数字 nav 仍应双击置顶"
+    assert (30, 200, True) in clicks, f"应有双击置顶(30,200): {clicks}"
+    assert res["clicked"] is True, res
+    assert res.get("entered_conversation") is True, res
+    print("[C] PASS -> 无数字 nav 仍双击置顶(30,200) + 点顶行")
 
 
 if __name__ == "__main__":

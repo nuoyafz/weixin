@@ -23,6 +23,49 @@ except ImportError:
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _INTERNAL_DIR = str(_PROJECT_ROOT / "_internal")
 
+# OCR 推理会话线程数（后台常驻 RPA 进程：限制 OCR 占核，避免抢占主线程
+# 导致点击/渲染卡顿）。RapidOCR 的 _init_sess_opts 从 config 读取这两个字段
+# （见 rapidocr_onnxruntime/utils/infer_engine.py），graph_optimization_level
+# 已由 rapidocr 默认设为 ORT_ENABLE_ALL，无需重复设置。
+# 可用环境变量临时覆盖：VISREPLY_OCR_INTRA_THREADS / VISREPLY_OCR_INTER_THREADS。
+OCR_INTRA_THREADS = int(os.environ.get("VISREPLY_OCR_INTRA_THREADS", "2"))
+OCR_INTER_THREADS = int(os.environ.get("VISREPLY_OCR_INTER_THREADS", "1"))
+# 可选 DirectML(GPU) 加速：纯配置开启，不换模型、不影响准度。默认关，避免少数
+# 无 DML 运行时的机器初始化失败；真机验证可用后设 VISREPLY_OCR_DML=1 让 OCR 走 GPU。
+OCR_USE_DML = os.environ.get("VISREPLY_OCR_DML") == "1"
+
+
+def _build_rapidocr_runtime_config():
+    """复制 rapidocr 自带 config.yaml 为临时文件并修正推理会话线程数。
+
+    不改安装目录原文件（零破坏）。返回值传给 RapidOCR(config_path=...) 即可生效。
+    失败时返回 None，调用方回退到默认构造（行为等同旧版，不影响功能）。
+    """
+    try:
+        import tempfile
+        import yaml
+        ro_mod = __import__("rapidocr_onnxruntime", fromlist=["__file__"])
+        ro_cfg = os.path.join(os.path.dirname(ro_mod.__file__), "config.yaml")
+        if not os.path.exists(ro_cfg):
+            return None
+        with open(ro_cfg, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        cfg["intra_op_num_threads"] = OCR_INTRA_THREADS
+        cfg["inter_op_num_threads"] = OCR_INTER_THREADS
+        # 可选 DirectML(GPU) 加速：纯配置开启，不改模型、不影响准度。默认关，
+        # 避免少数无 DML 运行时的机器初始化失败。真机验证可用后设
+        # VISREPLY_OCR_DML=1 即让 OCR 走 GPU 推理（Det/Cls/Rec 三段同时开启）。
+        if OCR_USE_DML:
+            for sec in ("Det", "Cls", "Rec"):
+                if isinstance(cfg.get(sec), dict):
+                    cfg[sec]["use_dml"] = True
+        tmp = os.path.join(tempfile.gettempdir(), "visreply_rapidocr_config.yaml")
+        with open(tmp, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+        return tmp
+    except Exception:
+        return None
+
 
 # SVG path 矢量数据噪声：图标/矢量描边被 RapidOCR 误读为文字，
 # 典型形如 '18.172Q600.992 19.6 600.992 21.56L600.992 21.896...Z'。
@@ -188,7 +231,9 @@ class OCREngine:
                     "Global.width_height_ratio": 8,
                     "Global.box_thresh": self.box_thresh,
                 }
-                self._engine = _RapidOCR(params=params)
+                _ro_cfg = _build_rapidocr_runtime_config()
+                self._engine = (_RapidOCR(config_path=_ro_cfg, params=params)
+                                if _ro_cfg else _RapidOCR(params=params))
                 self._initialized = True
                 return True
             else:
@@ -210,7 +255,9 @@ class OCREngine:
                 "Global.text_score": self.text_score,
                 "Global.box_thresh": self.box_thresh,
             }
-            self._engine = RapidOCR(params=params)
+            _ro_cfg = _build_rapidocr_runtime_config()
+            self._engine = (RapidOCR(config_path=_ro_cfg, params=params)
+                            if _ro_cfg else RapidOCR(params=params))
             self._initialized = True
             return True
         except Exception:

@@ -11,5 +11,5 @@ My WeChat Agent - 基于纯视觉OCR的微信自动化助手
 - RPA 自动化控制
 """
 
-__version__ = "1.0.0"
+__version__ = "1.6.11"
 __author__ = "My WeChat Agent"

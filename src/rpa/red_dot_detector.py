@@ -28,6 +28,8 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 import numpy as np
 from PIL import Image
 
+from . import nav_anchors
+
 
 # =====================================================================
 # 检测常量（来自对真实微信窗口的实测标定，非反编译猜测）
@@ -67,6 +69,11 @@ AVATAR_COL_TOLERANCE = 18
 # 点击时相对检测点向右偏移，落在「昵称/消息」文本区（而非头像/红点本身），
 # 确保单击打开的是该联系人的会话（写死 x=100 在宽窗口会点到头像左侧空白）。
 CLICK_OFFSET_X = 48
+# 空闲节流上限（Batch4：weixin_monitor 帧变化检测 + 防抖思路）：
+# 连续 IDLE_MAX_SKIP 轮「无未读 + 窗口几何未变」则跳过截图/扫描/OCR；
+# 第 IDLE_MAX_SKIP+1 轮强制扫描一次（防抖，避免静止时漏掉新消息）。
+# 有未读时 _last_scan_empty=False，guard 不触发，实时性不受影响。
+IDLE_MAX_SKIP = 2
 # 联系人列表扫描区域（相对整窗，比例化以适配不同窗口尺寸）
 LIST_X_START_RATIO = 0.02  # 覆盖列表项头像列（含左侧导航栏边缘），后续用众数中心列剔除导航栏
 LIST_X_END_RATIO = 0.24
@@ -81,6 +88,13 @@ NAV_BUDDY_Y_MAX_RATIO = 0.18
 # 导航栏扫描时跳过顶部用户头像区域，避免把用户头像（如红色衣服/头像框）
 # 误判为「聊天未读 badge」。
 NAV_AVATAR_SKIP_RATIO = 0.115
+# nav_badge 的 x 门限（防假阳性，2026-09-08 离线评测 57 帧实证）：
+# 1720 宽实测真徽章 box 右缘 ≤98px；列表行红点冒充 nav 徽章 center_x=196。
+# 门限 = max(110px, 0.105W)：1720→180 杀列表行红点(196)；1638 高 DPI 真机
+# 契约徽章中心 165 仍通过（tests/test_nav_badge_wide.py 锁定）。
+# 注意：x 单独不能区分群头像假徽章(160~180)，数字真伪由 cluster 路径的
+# 「红包围白」校验兜底（见 _blob_has_enclosed_white_digits）。
+NAV_BADGE_X_MAX_PX = 110
 # 纯红点未读：面积达到该值（px²）且读不出数字时，视为未读=1（微信"纯红点"形态，
 # 表示有未读但未显示数字）。低于该值的是残片/噪声，不降级、不点击。
 # 注意：红点面积随窗口缩放（1750 宽下 13px 红点在小窗口 946 宽会缩到 ~7px、
@@ -181,6 +195,10 @@ class RedDotDetector:
         self._nav_badge: Optional[dict] = None
         self._contact_dots: List[dict] = []
         self._consecutive_empty: int = 0
+        # 空闲节流状态（Batch4：帧变化检测 + 防抖）
+        self._idle_streak: int = 0
+        self._last_geom: Optional[tuple] = None
+        self._last_scan_empty: bool = False
         # 头像列时间平滑锚：单点未读时本帧聚类锚定不可用（需 ≥2 点），
         # 用历史多帧的红点 center_x 中位数做先验，过滤偏离列的红块并
         # 让点击坐标稳定落在昵称区。
@@ -275,6 +293,337 @@ class RedDotDetector:
         for y in stale:
             self._failed_contact_ys.discard(y)
             self._failed_contact_y_frames.pop(y, None)
+
+
+    def _top_row_has_reddot(self, img, w, h) -> bool:
+        """双击置顶后，判断列表首个会话行（顶行）是否带未读红点。
+
+        用于「点顶行进会话」前的短路：顶行无红点说明置顶没把未读顶上来 /
+        顶行并非未读，直接点进去会空跑一轮（进会话+验证约 20~60s 浪费），
+        应跳过点击、立即重双击置顶取下一个未读。
+
+        安全约束（避免重蹈「判空短路漏掉真实未读」覆辙）：仅当列表**确有**
+        红点、但**都不在顶行**时才判定「顶行无红点 → 跳过点」；若 T1 漏检
+        （无红点）或顶行定位失败，一律保守返回 True（照常点击），不引入新跳过。
+        """
+        if img is None:
+            return True
+        try:
+            cds = self._scan_contact_dots(img)
+        except Exception:
+            return True
+        if not cds:
+            return True  # T1 漏检：无法确认顶行无红点 → 保守点击
+        sb = self._detect_search_box_bottom(img, w, h)
+        if sb is None:
+            return True  # 搜索框检不出 → 无法定位顶行 → 保守点击
+        top_y = self._first_avatar_below(img, w, h, sb + 2)
+        if top_y is None:
+            return True
+        tol = int(h * 0.06)
+        for c in cds:
+            cy = c.get("center_y")
+            if cy is None:
+                continue
+            if abs(cy - top_y) <= tol:
+                return True
+        # 列表里确有红点，但都不在顶行 → 顶行非未读 → 置顶未把未读顶上来
+        return False
+
+    def _pin_doubleclick_branch(self, window_handle, w, h, wm, nav_num, result):
+        """双击聊天图标置顶未读 + 点顶行 + 验证未读减少；失败重试并降级红点扫描。
+
+        从 find_and_click_unread 的 pin 分支抽取，供两处复用：
+          1) nav 读出未读数字时主路径；
+          2) 红点点击后验证未读未减少时的兜底路径。
+        nav_num 为 None 时内部重扫 nav 取数字（兜底场景）。
+        """
+        if nav_num is None:
+            try:
+                _img0 = self._capture(window_handle)
+                if _img0 is not None:
+                    _nb0 = self._scan_nav_badge(_img0)
+                    if _nb0 and _nb0.get("unread_count") is not None:
+                        nav_num = _nb0["unread_count"]
+            except Exception:
+                pass
+        # —— 不再在双击前用首扫 contact_dots 判空短路 ——
+        # 首扫 T1 漏检会误判「列表无红点」→ 误跳过真实未读（复现全员不点）。
+        # 双击后置顶列表是否有红点，改由 _click_top_conversation_row 内部的
+        # pin_not_effective 信号判定（T1无未读行+顶行非客户+nav>0 → 不点、交重试），
+        # 更准且避免空转误杀。
+        # —— 强制确保在聊天列表（修真机 bug）——
+        # 历史事故：真机上微信偶尔停留在通讯录页就开始这轮，nav 仍能读出徽章，
+        # 但双击聊天图标只能让通讯录→聊天列表切换一次，后续坐标全错位；甚至
+        # 出现「双击后页面跳错、点搜索框」连锁问题。先单击聊天图标回聊天列表，
+        # 校验 contact_dots 分布合理再走 pin。
+        try:
+            if not self._ensure_chat_list(window_handle, w, h, wm):
+                self._debug_log("[PIN] ensure_chat_list 校验失败，放弃本轮置顶")
+                result.update(
+                    found=False, clicked=False, kind="nav_badge",
+                    entered_conversation=False,
+                    reason="ensure_chat_list failed before pin",
+                    unread_count=nav_num)
+                return result
+        except Exception as exc:
+            self._debug_log(f"[PIN] ensure_chat_list 异常: {exc}")
+        # ensure_chat_list 可能改了 rect，重新拿一遍
+        try:
+            live = self._live_rect(window_handle)
+            if live:
+                w, h = live["width"], live["height"]
+        except Exception:
+            pass
+        # 复用第一次扫描已锁定的 nav 未读数（nav_num 在进入本分支前已赋值）。
+        # 原此处会重新截图 + 再 OCR 一次 nav 徽章（约 15~20s），但「单击聊天
+        # 图标回聊天列表」不改变未读总数，数字不会变，属纯冗余——删除以消除
+        # 启动后到双击置顶之间约 20s 的空转。若真机发现切页导致数字变化，
+        # 由 _verify_pin_success 在进会话后复验兜底（after<before 判成功）。
+        self._debug_log(
+            f"[PIN] 识别模式=双击置顶 nav未读数={nav_num}，双击聊天图标置顶未读")
+        # 双击置顶 + 点顶行 + 验证：验证失败(未读未减少)时重试双击置顶，
+        # 而非直接按成功处理（避免过渡帧误判导致误回复发错）。
+        MAX_PIN_RETRY = 3  # 含首次共最多 3 次双击置顶尝试
+        top = None
+        status = "fail"
+        after = nav_num
+        _skipped_no_dot = False  # 顶行无红点跳过点击的标记，供循环结束后走兜底
+        for _pin_try in range(MAX_PIN_RETRY):
+            if _pin_try == 0:
+                self._debug_log(
+                    f"[PIN] 识别模式=双击置顶 nav未读数={nav_num}，双击聊天图标置顶未读")
+            else:
+                # 重试前先回聊天列表，避免上次进入的会话视图干扰本次双击置顶
+                try:
+                    self._ensure_chat_list(window_handle, w, h, wm=wm)
+                    time.sleep(0.4)
+                except Exception:
+                    pass
+                self._debug_log(
+                    f"nav-pin: 验证失败，重试双击置顶 (第 {_pin_try + 1}/{MAX_PIN_RETRY} 次)")
+
+            # —— VeriGUI E_t：动作前显式声明「预期效果」，供动作后对照 ——
+            # 没有这一步，验证日志只能给出 after/before 数值，无法区分
+            # 「双击真的没生效」与「生效了但验证误判/截到过渡帧」。
+            self._debug_log(
+                f"[EXPECT] 动作前声明：双击置顶后 nav 未读 {nav_num} "
+                f"应减少或徽章消失（第 {_pin_try + 1}/{MAX_PIN_RETRY} 次）")
+
+            self._pin_unread_to_top(window_handle, w, h, wm)
+
+            img2 = self._capture(window_handle)
+            # —— 预点击红点门限（用户要求：顶行无红点则跳过点击，立即重双击置顶）——
+            # 仅当「列表确有红点但都不在顶行」时跳过点（顶行非未读），T1 漏检/定位
+            # 失败则保守照常点击；跳过时不进入会话，立即进入下一次双击置顶重试。
+            if img2 is not None and not self._top_row_has_reddot(img2, w, h):
+                self._debug_log(
+                    "[PIN] 列表有红点但顶行无红点，跳过点击，"
+                    "立即重双击置顶取下一个未读")
+                _skipped_no_dot = True
+                continue
+            top = self._click_top_conversation_row(
+                window_handle, w, h, wm, nav_num=nav_num, img=img2)
+            if not top.get("clicked"):
+                if top.get("pin_not_effective"):
+                    # 双击置顶未生效（T1无未读行+顶行非客户+nav>0）：
+                    # 进入重试，下一轮开头会先回聊天列表再双击，不盲点、不兜底。
+                    self._debug_log(
+                        "nav-pin: 双击置顶未生效（前置软信号），进入重试")
+                    continue
+                # 顶行点击失败：保守回退，不重复点击
+                break
+            self._consecutive_empty = 0
+
+            # 顶行昵称 OCR 仅作日志回显，不再用于黑名单拦截
+            top_y = top.get("click_y") or int(h * 0.105)
+            name = ""
+            if img2 is not None:
+                try:
+                    name = self._resolve_contact_name(
+                        img2, {"center_y": top_y}, w)
+                except Exception:
+                    name = ""
+            top["contact"] = name or top.get("contact", "")
+
+            # —— 双击置顶成功校验：点击后未读数量是否减少 ——
+            # 进入未读会话后微信会清零该会话未读，nav 总数随之下降；
+            # 若总数未变化，说明双击未生效 / 点错行 → 重试双击置顶。
+            # 传 img2（点击顶行前的基准帧）启用像素快速路径：徽章消失可秒判
+            # 成功，免去 3 次 OCR 读数字（原约 20~60s）；徽章仍在时自动降级 OCR。
+            status, after = self._verify_pin_success(
+                window_handle, w, h, wm, nav_num, before_img=img2)
+            verify_ok = status == "success"
+            # VeriGUI E_t 对照：把「动作前声明的预期」与「验证实际结果」比对，
+            # 让真机日志能直接区分三类失败——
+            #   hit     = 预期达成（双击生效，未读确实减少/徽章消失）
+            #   missed  = 预期落空（双击大概率真没生效，不是验证误判）
+            #   unknown = 无法判定（before 读不出/截图全失败，与动作无关）
+            if status == "success":
+                expect_state = "hit"
+            elif status == "fail":
+                expect_state = "missed"
+            else:
+                expect_state = "unknown"
+            self._debug_log(
+                f"[EXPECT] 预期=nav{nav_num}→减少/徽章消失 "
+                f"实际=status:{status} after:{after} -> {expect_state}")
+            self._debug_log(
+                f"nav-pin: 验证 双击前未读={nav_num} "
+                f"点击后未读={after} -> "
+                f"{'成功' if verify_ok else ('失败(双击可能未生效)' if status == 'fail' else '无法判定')}")
+
+            # 顶行是否带未读红点（仅供双击生效排查）
+            row_had_dot = False
+            if img2 is not None:
+                try:
+                    cds = self._scan_contact_dots(img2)
+                    row_had_dot = any(
+                        abs(c["center_y"] - top_y) < int(h * 0.04)
+                        for c in cds)
+                except Exception:
+                    pass
+
+            entered = bool(top.get("entered_conversation"))
+            # 打开的若是系统会话（文件传输助手等），视为「置顶未生效」→ 降级兜底
+            opened_system = bool(
+                status == "fail" and entered
+                and self._opened_is_system_contact(window_handle, w, h))
+
+            top["pin_echo"] = {
+                "name": top["contact"],
+                "unread": nav_num,
+                "method": "top_row",
+                "row_had_dot": row_had_dot,
+                "verify": status,
+                "before": nav_num,
+                "after": after,
+                "pin_try": _pin_try + 1,
+            }
+            top["pin_verify"] = status
+
+            if status != "fail":
+                # success 或 unknown（无法判定）：沿用原行为返回本次点击，
+                # 不重试、不兜底（unknown 表示 before 读不出/截图全失败，强行重试无意义）。
+                return top
+
+            # 验证失败分支（status == "fail"）
+            if not entered or opened_system:
+                # 未进入会话，或进入了系统会话（无真实客户未读）
+                # → 退出重试，走红点扫描兜底。
+                self._debug_log(
+                    "nav-pin: 验证失败，"
+                    + ("打开了系统会话，转红点扫描兜底)"
+                       if opened_system else "未进入会话，转红点扫描兜底)"))
+                break
+
+            # status == "fail" and entered and not opened_system：
+            # 用户要求——继续双击置顶重试，而不是按成功处理（疑似过渡帧误判）。
+            # 下一轮循环开头会先回聊天列表再双击，避免会话视图挡住双击。
+            self._debug_log(
+                f"nav-pin: 验证失败(双击前={nav_num} 点击后={after}) "
+                f"但已进入会话，继续双击置顶重试 (第 {_pin_try + 1}/{MAX_PIN_RETRY} 次)")
+
+        # ---- 重试结束后的兜底决策 ----
+        # 走到这里的情况：① 顶行点击失败；② 验证失败且未进入会话/系统会话；
+        # ③ 重试 MAX_PIN_RETRY 次仍 fail+entered（不再按成功处理）。
+        # 对 ②③（曾进入会话）统一降级红点扫描兜底；对 ① 保守返回未点击。
+        if top is not None and top.get("clicked"):
+            # 曾进入会话但重试耗尽仍未验证成功 → 降级红点扫描兜底
+            self._debug_log(
+                f"nav-pin: 重试 {MAX_PIN_RETRY} 次仍未验证成功，降级红点扫描兜底")
+            try:
+                self._ensure_chat_list(window_handle, w, h, wm=wm)
+                time.sleep(0.3)
+            except Exception:
+                pass
+            img_fb = self._capture(window_handle)
+            if img_fb is not None:
+                cds2 = self._scan_contact_dots(img_fb)
+                clickable2 = [d for d in cds2 if self._dot_clickable(d)]
+                if clickable2:
+                    res = self._pick_and_click_contact_dot(
+                        window_handle,
+                        sorted(clickable2, key=lambda d: d["center_y"]),
+                        img_fb, w, wm)
+                    if res.get("clicked"):
+                        res["pin_echo"] = None
+                        res["pin_verify"] = "fallback_red_dot"
+                        self._debug_log(
+                            f"nav-pin: 降级成功 点红点会话="
+                            f"{res.get('contact')!r}")
+                        return res
+            result.update(
+                found=True, clicked=False, kind="nav_badge",
+                entered_conversation=False,
+                reason="nav pin retry exhausted, fallback empty",
+                unread_count=nav_num, pin_verify="fail")
+            return result
+        if _skipped_no_dot:
+            # 多次双击置顶后顶行始终无红点（但列表确有红点）→ 不盲点顶行，
+            # 直接扫列表真实红点兜底点击，避免空跑进非未读会话。
+            self._debug_log(
+                "[PIN] 多次双击置顶后顶行仍无红点，转列表红点扫描兜底")
+            try:
+                self._ensure_chat_list(window_handle, w, h, wm=wm)
+                time.sleep(0.3)
+            except Exception:
+                pass
+            img_fb = self._capture(window_handle)
+            if img_fb is not None:
+                cds2 = self._scan_contact_dots(img_fb)
+                clickable2 = [d for d in cds2 if self._dot_clickable(d)]
+                if clickable2:
+                    res = self._pick_and_click_contact_dot(
+                        window_handle,
+                        sorted(clickable2, key=lambda d: d["center_y"]),
+                        img_fb, w, wm)
+                    if res.get("clicked"):
+                        res["pin_echo"] = None
+                        res["pin_verify"] = "fallback_red_dot_no_top_dot"
+                        self._debug_log(
+                            f"nav-pin: 降级成功 点红点会话="
+                            f"{res.get('contact')!r}")
+                        return res
+            result.update(
+                found=True, clicked=False, kind="nav_badge",
+                entered_conversation=False,
+                reason="nav pin: top never had red dot, fallback empty",
+                unread_count=nav_num)
+            return result
+        # 顶行点击失败（从未进入会话）：保守返回，不重复点击
+        self._consecutive_empty += 1
+        result.update(
+            found=True, clicked=False, kind="nav_badge",
+            entered_conversation=False,
+            reason="nav pin: top click failed",
+            unread_count=nav_num)
+        self._debug_log(
+            f"nav pin: top click failed unread={nav_num}")
+        return result
+
+
+    def _contact_click_reduced_unread(self, window_handle, w, h, wm, clicked_y) -> bool:
+        """红点点击后验证：被点未读行是否已从列表消失（未读已清零）。
+
+        点中未读会话后微信会清空该会话未读，对应红点应从列表消失；
+        若重扫后该行附近仍有红点，说明本次点击未生效/点错 -> 返回 False，
+        触发 pin 双击置顶兜底。截图/扫描失败时保守返回 True（视为成功）。
+        """
+        try:
+            self._ensure_chat_list(window_handle, w, h, wm=wm)
+            time.sleep(0.6)
+        except Exception:
+            pass
+        img = self._capture(window_handle)
+        if img is None:
+            return True
+        try:
+            cds = self._scan_contact_dots(img)
+        except Exception:
+            return True
+        still = any(abs(c["center_y"] - clicked_y) < int(h * 0.03) for c in cds)
+        return not still
 
     def _pick_and_click_contact_dot(self, window_handle: int, dots: List[dict],
                                     img: np.ndarray, win_w: int, wm) -> Dict[str, Any]:
@@ -383,6 +732,37 @@ class RedDotDetector:
             return result
         self._window_rect = rect
 
+        # —— 空闲节流（Batch4：weixin_monitor 帧变化检测 + 防抖）——
+        # 上一轮「无未读」且窗口几何未变 → 界面静止 → 跳过截图/扫描/OCR；
+        # 连续跳过 IDLE_MAX_SKIP 轮后强制扫描一次（防抖，避免新消息到达漏检）。
+        # 有未读时 _last_scan_empty=False，guard 不触发，每轮照常扫描+点击。
+        _geom = None
+        if live is not None:
+            # 兼容两种 rect 键名：_live_rect 用 left/top，部分调用方用 x/y。
+            _geom = (live.get("left", live.get("x")),
+                     live.get("top", live.get("y")),
+                     live.get("width"), live.get("height"))
+        # 用 getattr 兜底：部分测试/反序列化路径绕过 __init__ 直接造对象，
+        # 此时字段不存在，按「首轮」处理而不是抛 AttributeError 崩整轮。
+        _last_geom = getattr(self, "_last_geom", None)
+        _last_empty = getattr(self, "_last_scan_empty", False)
+        _streak = getattr(self, "_idle_streak", 0)
+        if (_geom is not None and _last_geom is not None
+                and _geom == _last_geom and _last_empty):
+            _streak += 1
+            if _streak < IDLE_MAX_SKIP:
+                self._debug_log(
+                    f"[IDLE] 静止帧跳过扫描 streak={_streak}/{IDLE_MAX_SKIP}")
+                result["reason"] = "idle_throttled"
+                self._idle_streak = _streak
+                self._last_geom = _geom
+                return result
+            _streak = 0  # 防抖上限，本轮强制扫描
+        else:
+            _streak = 0
+        self._idle_streak = _streak
+        self._last_geom = _geom
+
         # —— 截图（委托 ScreenCapture，内部处理 park/unpark）——
         img = self._capture(window_handle)
         if img is None:
@@ -404,6 +784,9 @@ class RedDotDetector:
             f"扫描结果 导航栏未读徽章={'有' if nav_badge is not None else '无'} "
             f"列表红点数={len(contact_dots)}")
 
+        # 更新空闲节流状态：本轮有无未读，供下一轮 guard 判定
+        self._last_scan_empty = (nav_badge is None and len(contact_dots) == 0)
+
         if self._auto_archive:
             self._archive_debug(img)
 
@@ -411,210 +794,25 @@ class RedDotDetector:
         # 优先级（新增置顶策略）：
         #   1) nav 有未读数字 → 双击聊天图标置顶未读 → 直接点顶行（不扫红点/不黑名单）
         #   2) 列表红点 → 直接点（保持原行为）
-        #   3) nav 仅徽章无数字（头像/噪声）→ 不双击，避免误点，走原恢复逻辑
+        #   3) nav 仅徽章无数字 → 仍双击置顶（用户要求先执行双击置顶，数字
+        #      读不出由顶行红点门限兜底，不退化红点直点）
         #   4) 全无 → 主页恢复
         # 只把"读出未读数字"或"面积足够大的完整红块"当作可点击的真实未读徽章；
         # 无数字的小红块很可能是头像/服务图标/消息预览里的彩色噪声，误点风险高。
         clickable_dots = [d for d in contact_dots if self._dot_clickable(d)]
-        nav_has_count = bool(
-            nav_badge and nav_badge.get("unread_count") is not None)
+        nav_num = nav_badge.get("unread_count") if nav_badge else None
         # 单一真相源：进入 pin 分支前就锁定「双击前」的未读总数。
         # 否则下面 early-return（426行）与 _click_top_conversation_row 调用（454行）
         # 都会用到未定义的 nav_num，触发 NameError，导致守卫失效 / 整轮崩溃。
-        nav_num = nav_badge.get("unread_count") if nav_badge else None
+        # 用户要求「先执行双击置顶」：只要检测到 nav 未读徽章（无论是否读出
+        # 数字）即走双击置顶主路径。徽章数字被红包围白校验误杀导致
+        # unread_count 为 None 时，也直接双击置顶，由顶行红点门限（:419）
+        # 兜底（顶行无红点则立即重置顶），不再退化到红点直点。
+        # 仅当 nav_badge 完全为 None（无任何未读徽章）才走原红点/恢复逻辑。
+        nav_detected = bool(nav_badge)
 
-        if nav_has_count and self._recognition_mode == "double_click_pin":
-            # —— 不再在双击前用首扫 contact_dots 判空短路 ——
-            # 首扫 T1 漏检会误判「列表无红点」→ 误跳过真实未读（复现全员不点）。
-            # 双击后置顶列表是否有红点，改由 _click_top_conversation_row 内部的
-            # pin_not_effective 信号判定（T1无未读行+顶行非客户+nav>0 → 不点、交重试），
-            # 更准且避免空转误杀。
-            # —— 强制确保在聊天列表（修真机 bug）——
-            # 历史事故：真机上微信偶尔停留在通讯录页就开始这轮，nav 仍能读出徽章，
-            # 但双击聊天图标只能让通讯录→聊天列表切换一次，后续坐标全错位；甚至
-            # 出现「双击后页面跳错、点搜索框」连锁问题。先单击聊天图标回聊天列表，
-            # 校验 contact_dots 分布合理再走 pin。
-            try:
-                if not self._ensure_chat_list(window_handle, w, h, wm):
-                    self._debug_log("[PIN] ensure_chat_list 校验失败，放弃本轮置顶")
-                    result.update(
-                        found=False, clicked=False, kind="nav_badge",
-                        entered_conversation=False,
-                        reason="ensure_chat_list failed before pin",
-                        unread_count=nav_num)
-                    return result
-            except Exception as exc:
-                self._debug_log(f"[PIN] ensure_chat_list 异常: {exc}")
-            # ensure_chat_list 可能改了 rect，重新拿一遍
-            try:
-                live = self._live_rect(window_handle)
-                if live:
-                    w, h = live["width"], live["height"]
-            except Exception:
-                pass
-            # 复用第一次扫描已锁定的 nav 未读数（nav_num 在进入本分支前已赋值）。
-            # 原此处会重新截图 + 再 OCR 一次 nav 徽章（约 15~20s），但「单击聊天
-            # 图标回聊天列表」不改变未读总数，数字不会变，属纯冗余——删除以消除
-            # 启动后到双击置顶之间约 20s 的空转。若真机发现切页导致数字变化，
-            # 由 _verify_pin_success 在进会话后复验兜底（after<before 判成功）。
-            self._debug_log(
-                f"[PIN] 识别模式=双击置顶 nav未读数={nav_num}，双击聊天图标置顶未读")
-            # 双击置顶 + 点顶行 + 验证：验证失败(未读未减少)时重试双击置顶，
-            # 而非直接按成功处理（避免过渡帧误判导致误回复发错）。
-            MAX_PIN_RETRY = 3  # 含首次共最多 3 次双击置顶尝试
-            top = None
-            status = "fail"
-            after = nav_num
-            for _pin_try in range(MAX_PIN_RETRY):
-                if _pin_try == 0:
-                    self._debug_log(
-                        f"[PIN] 识别模式=双击置顶 nav未读数={nav_num}，双击聊天图标置顶未读")
-                else:
-                    # 重试前先回聊天列表，避免上次进入的会话视图干扰本次双击置顶
-                    try:
-                        self._ensure_chat_list(window_handle, w, h, wm=wm)
-                        time.sleep(0.4)
-                    except Exception:
-                        pass
-                    self._debug_log(
-                        f"nav-pin: 验证失败，重试双击置顶 (第 {_pin_try + 1}/{MAX_PIN_RETRY} 次)")
-
-                self._pin_unread_to_top(window_handle, w, h, wm)
-
-                img2 = self._capture(window_handle)
-                top = self._click_top_conversation_row(
-                    window_handle, w, h, wm, nav_num=nav_num, img=img2)
-                if not top.get("clicked"):
-                    if top.get("pin_not_effective"):
-                        # 双击置顶未生效（T1无未读行+顶行非客户+nav>0）：
-                        # 进入重试，下一轮开头会先回聊天列表再双击，不盲点、不兜底。
-                        self._debug_log(
-                            "nav-pin: 双击置顶未生效（前置软信号），进入重试")
-                        continue
-                    # 顶行点击失败：保守回退，不重复点击
-                    break
-                self._consecutive_empty = 0
-
-                # 顶行昵称 OCR 仅作日志回显，不再用于黑名单拦截
-                top_y = top.get("click_y") or int(h * 0.105)
-                name = ""
-                if img2 is not None:
-                    try:
-                        name = self._resolve_contact_name(
-                            img2, {"center_y": top_y}, w)
-                    except Exception:
-                        name = ""
-                top["contact"] = name or top.get("contact", "")
-
-                # —— 双击置顶成功校验：点击后未读数量是否减少 ——
-                # 进入未读会话后微信会清零该会话未读，nav 总数随之下降；
-                # 若总数未变化，说明双击未生效 / 点错行 → 重试双击置顶。
-                # 传 img2（点击顶行前的基准帧）启用像素快速路径：徽章消失可秒判
-                # 成功，免去 3 次 OCR 读数字（原约 20~60s）；徽章仍在时自动降级 OCR。
-                status, after = self._verify_pin_success(
-                    window_handle, w, h, wm, nav_num, before_img=img2)
-                verify_ok = status == "success"
-                self._debug_log(
-                    f"nav-pin: 验证 双击前未读={nav_num} "
-                    f"点击后未读={after} -> "
-                    f"{'成功' if verify_ok else ('失败(双击可能未生效)' if status == 'fail' else '无法判定')}")
-
-                # 顶行是否带未读红点（仅供双击生效排查）
-                row_had_dot = False
-                if img2 is not None:
-                    try:
-                        cds = self._scan_contact_dots(img2)
-                        row_had_dot = any(
-                            abs(c["center_y"] - top_y) < int(h * 0.04)
-                            for c in cds)
-                    except Exception:
-                        pass
-
-                entered = bool(top.get("entered_conversation"))
-                # 打开的若是系统会话（文件传输助手等），视为「置顶未生效」→ 降级兜底
-                opened_system = bool(
-                    status == "fail" and entered
-                    and self._opened_is_system_contact(window_handle, w, h))
-
-                top["pin_echo"] = {
-                    "name": top["contact"],
-                    "unread": nav_num,
-                    "method": "top_row",
-                    "row_had_dot": row_had_dot,
-                    "verify": status,
-                    "before": nav_num,
-                    "after": after,
-                    "pin_try": _pin_try + 1,
-                }
-                top["pin_verify"] = status
-
-                if status != "fail":
-                    # success 或 unknown（无法判定）：沿用原行为返回本次点击，
-                    # 不重试、不兜底（unknown 表示 before 读不出/截图全失败，强行重试无意义）。
-                    return top
-
-                # 验证失败分支（status == "fail"）
-                if not entered or opened_system:
-                    # 未进入会话，或进入了系统会话（无真实客户未读）
-                    # → 退出重试，走红点扫描兜底。
-                    self._debug_log(
-                        "nav-pin: 验证失败，"
-                        + ("打开了系统会话，转红点扫描兜底)"
-                           if opened_system else "未进入会话，转红点扫描兜底)"))
-                    break
-
-                # status == "fail" and entered and not opened_system：
-                # 用户要求——继续双击置顶重试，而不是按成功处理（疑似过渡帧误判）。
-                # 下一轮循环开头会先回聊天列表再双击，避免会话视图挡住双击。
-                self._debug_log(
-                    f"nav-pin: 验证失败(双击前={nav_num} 点击后={after}) "
-                    f"但已进入会话，继续双击置顶重试 (第 {_pin_try + 1}/{MAX_PIN_RETRY} 次)")
-
-            # ---- 重试结束后的兜底决策 ----
-            # 走到这里的情况：① 顶行点击失败；② 验证失败且未进入会话/系统会话；
-            # ③ 重试 MAX_PIN_RETRY 次仍 fail+entered（不再按成功处理）。
-            # 对 ②③（曾进入会话）统一降级红点扫描兜底；对 ① 保守返回未点击。
-            if top is not None and top.get("clicked"):
-                # 曾进入会话但重试耗尽仍未验证成功 → 降级红点扫描兜底
-                self._debug_log(
-                    f"nav-pin: 重试 {MAX_PIN_RETRY} 次仍未验证成功，降级红点扫描兜底")
-                try:
-                    self._ensure_chat_list(window_handle, w, h, wm=wm)
-                    time.sleep(0.3)
-                except Exception:
-                    pass
-                img_fb = self._capture(window_handle)
-                if img_fb is not None:
-                    cds2 = self._scan_contact_dots(img_fb)
-                    clickable2 = [d for d in cds2 if self._dot_clickable(d)]
-                    if clickable2:
-                        res = self._pick_and_click_contact_dot(
-                            window_handle,
-                            sorted(clickable2, key=lambda d: d["center_y"]),
-                            img_fb, w, wm)
-                        if res.get("clicked"):
-                            res["pin_echo"] = None
-                            res["pin_verify"] = "fallback_red_dot"
-                            self._debug_log(
-                                f"nav-pin: 降级成功 点红点会话="
-                                f"{res.get('contact')!r}")
-                            return res
-                result.update(
-                    found=True, clicked=False, kind="nav_badge",
-                    entered_conversation=False,
-                    reason="nav pin retry exhausted, fallback empty",
-                    unread_count=nav_num, pin_verify="fail")
-                return result
-            # 顶行点击失败（从未进入会话）：保守返回，不重复点击
-            self._consecutive_empty += 1
-            result.update(
-                found=True, clicked=False, kind="nav_badge",
-                entered_conversation=False,
-                reason="nav pin: top click failed",
-                unread_count=nav_num)
-            self._debug_log(
-                f"nav pin: top click failed unread={nav_num}")
-            return result
+        if nav_detected and self._recognition_mode == "double_click_pin":
+            return self._pin_doubleclick_branch(window_handle, w, h, wm, nav_num, result)
 
         # —— 关键修复（启动即点默认会话窗口 / 末尾还有未读却 idle）——
         # 只要列表里扫到红点（已通过颜色+结构锚定双重过滤），就优先点最顶红点，
@@ -630,7 +828,16 @@ class RedDotDetector:
                 sorted(candidates, key=lambda d: d["center_y"]),
                 img, self._window_rect.get("width", 0), wm)
             if res.get("clicked"):
-                return res
+                # 用户第14条：红点点击后验证未读是否真减少，
+                # 未减少（点错/未生效）则降级 pin 双击置顶兜底。
+                clicked_y = res.get("click_y")
+                if not clicked_y or self._contact_click_reduced_unread(
+                        window_handle, w, h, wm, clicked_y):
+                    return res
+                self._debug_log(
+                    "红点点击后未读未减少，降级 pin 双击置顶兜底")
+                return self._pin_doubleclick_branch(
+                    window_handle, w, h, wm, None, result)
             # 全黑名单/点击失败 → 继续下方 nav_badge / 主页恢复兜底
 
         if nav_badge:
@@ -1002,25 +1209,25 @@ class RedDotDetector:
             if min(bw, bh) < 12:
                 continue
             found_digit: Optional[int] = None
-            for xr in (0.45, 0.50, 0.55):
-                for yr in (0.0, 0.05):
-                    cx1 = int(sx + bw * xr)
-                    cx2 = int(sx + bw * 0.95)
-                    cy1 = int(sy + bh * yr)
-                    cy2 = int(sy + bh * 0.45)
-                    if cx2 <= cx1 or cy2 <= cy1:
-                        continue
-                    crop = region[cy1:cy2, cx1:cx2]
-                    if crop.size == 0:
-                        continue
+            # T1-② 提速：徽章 crop 已是单数字区域，直接走 rec-only（跳过 det+cls 两模型，
+            # 其中 det 是全图检测最重的一环）。原逻辑 xr(3)×yr(2)×proc(3)=18 次 full OCR/
+            # 候选点，改为「单次定位数字子窗 + 3 个预处理变体」共 3 次 rec-only，约 6x 调用
+            # 缩减且每次更轻。稳度靠上方 _find_dots 已精确定位 + 多预处理变体 + 数字正则兜底。
+            cx1 = int(sx + bw * 0.35)
+            cx2 = int(sx + bw * 0.95)
+            cy1 = int(sy + bh * 0.08)
+            cy2 = int(sy + bh * 0.50)
+            if cx2 > cx1 and cy2 > cy1:
+                crop = region[cy1:cy2, cx1:cx2]
+                if crop.size:
                     big = cv2.resize(crop, None, fx=5, fy=5,
                                      interpolation=cv2.INTER_CUBIC)
                     gray = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
                     _, binary = cv2.threshold(gray, 0, 255,
                                               cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                     for proc in (big, binary, cv2.bitwise_not(binary)):
-                        res = ocr.run(proc)
                         try:
+                            res = ocr.run(proc, use_det=False, use_cls=False)
                             texts = [ln.text.strip() for ln in res.iter_items() if ln.text]
                         except Exception:
                             texts = []
@@ -1033,14 +1240,10 @@ class RedDotDetector:
                                 if 1 <= n <= 99:
                                     found_digit = n
                                     self._debug_log(
-                                        f"[T1] 导航栏聚类OCR 命中徽章 文字={t!r} 未读数={n}")
+                                        f"[T1] 导航栏聚类OCR(rec-only) 命中徽章 文字={t!r} 未读数={n}")
                                     break
                         if found_digit is not None:
                             break
-                    if found_digit is not None:
-                        break
-                if found_digit is not None:
-                    break
             if found_digit is None:
                 continue
             badges.append({
@@ -1080,23 +1283,64 @@ class RedDotDetector:
         avatar_bottom = self._nav_avatar_bottom(img)
         if avatar_bottom is not None:
             nav_y_min = max(nav_y_min, avatar_bottom + 6)
+        # T1-accuracy（2026-09-08 离线评测）：x 门限 —— 徽章必须钉在
+        # 「聊天」图标上。群头像/通讯录内容/列表行红点全部 x≥117px，
+        # 真徽章 ≤98px，一刀切干净分离。
+        nav_x_max = max(NAV_BADGE_X_MAX_PX, int(w * 0.105))
         # nav_badge 走宽松 max_size：高 DPI/大窗口下徽章可达 60~80px，放宽到 80
         dots = self._find_dots(nav_region, max_size=80)
         if dots:
             # 跳过顶部用户头像区域（头像常是彩色/红色，易被误认为 badge），
-            # 并排除绿色「聊天」图标（浅色主题下被 green_mask 抓到，非徽章）。
+            # 排除绿色「聊天」图标（浅色主题下被 green_mask 抓到，非徽章），
+            # 并按 x 门限剔除群头像/列表行/通讯录内容假徽章。
+            _raw_dot_cnt = len(dots)
             dots = [d for d in dots
-                    if d.center_y >= nav_y_min and d.kind in ("red", "purple")]
+                    if d.center_y >= nav_y_min and d.kind in ("red", "purple")
+                    and d.center_x <= nav_x_max]
+            if _raw_dot_cnt != len(dots):
+                self._debug_log(
+                    f"[T1] nav徽章x门限 过滤 {_raw_dot_cnt - len(dots)} 个候选 "
+                    f"(x<={nav_x_max}px，疑群头像/列表行/通讯录内容)")
             if dots:
                 best = max(dots, key=lambda d: d.area)
                 if best.center_y < nav_y_max:
                     box = {"x": best.x, "y": best.y, "w": best.w, "h": best.h}
+                    num = self._read_badge_number(img, box)
+                    # T1-accuracy：红包围白校验（主路径同样适用）。评测实证
+                    # 群头像 blob 可通过 _find_dots 几何门并读出 11 —— 真徽章
+                    # 的白色数字笔画被红色包围（88~102），照片假徽章为 0~13。
+                    _enclosed_fail = False
+                    if num is not None and not self._blob_has_enclosed_white_digits(img, box):
+                        self._debug_log(
+                            f"[T1] nav徽章红包围白校验失败 弃读数字={num} "
+                            f"box=({box['x']},{box['y']},{box['w']},{box['h']})")
+                        num = None
+                        _enclosed_fail = True
+                    # P0 同帧短路 + 连续失败熔断：位置已确认是 nav 徽章，若读不出
+                    # 数字则已知可按未读=1（双击置顶验证靠顶行红点/像素对比，
+                    # 不依赖具体数字），避免反复跑 OCR 变体（约 15s）。红包围白
+                    # 误杀亦直接按未读=1；纯 OCR 读不出则连续 2 次熔断。
+                    if num is None:
+                        if _enclosed_fail:
+                            self._debug_log(
+                                "[T1] nav徽章红包围白误杀，按未读=1 短路")
+                            num = 1
+                        else:
+                            self._nav_ocr_miss = getattr(
+                                self, "_nav_ocr_miss", 0) + 1
+                            if self._nav_ocr_miss >= 2:
+                                self._debug_log(
+                                    f"[T1] nav徽章OCR连续 {self._nav_ocr_miss} 次"
+                                    f"读不出，熔断按未读=1")
+                                num = 1
+                    else:
+                        self._nav_ocr_miss = 0
                     return {
                         "x": best.x, "y": best.y,
                         "w": best.w, "h": best.h,
                         "center_x": best.center_x, "center_y": best.center_y,
                         "area": best.area, "kind": "nav_badge",
-                        "unread_count": self._read_badge_number(img, box),
+                        "unread_count": num,
                     }
             # 传统红点检测只在头像区命中（已被过滤）或未命中时，
             # 继续走 cluster-OCR fallback，避免绿色/融合 badge 漏检。
@@ -1110,15 +1354,64 @@ class RedDotDetector:
         if badges:
             # T1: cluster-OCR fallback 同样要滤掉头像区假徽章
             #（实测 unread_debug 帧 (29,66) 头像被当徽章读出假数字）。
-            valid = [b for b in badges if b["center_y"] >= nav_y_min]
+            # T1-accuracy（2026-09-08）：同主路径加 x 门限 + 尺寸上限 ——
+            # 评测实证通讯录行(box 89x79)/群头像(x=160)从这里混入并被
+            # OCR 读出 1/9/11 假数字。
+            valid = [b for b in badges
+                     if b["center_y"] >= nav_y_min
+                     and b["center_x"] <= nav_x_max
+                     and b.get("w", 0) <= 60 and b.get("h", 0) <= 60]
             if not valid:
+                self._debug_log(
+                    f"[T1] nav徽章cluster候选全被x/尺寸门限过滤 "
+                    f"(x<={nav_x_max}px, wh<=60, 原候选={len(badges)})")
                 return None
             best = min(valid, key=lambda b: b["center_y"])
             if best["center_y"] >= nav_y_max:
                 return None
             best["kind"] = "nav_badge"
+            if best.get("unread_count") is not None and not self._blob_has_enclosed_white_digits(img, best):
+                self._debug_log(
+                    f"[T1] nav徽章红包围白校验失败 弃读数字="
+                    f"{best.get('unread_count')} box=({best.get('x')},{best.get('y')},"
+                    f"{best.get('w')},{best.get('h')})")
+                best["unread_count"] = None
             return best
         return None
+
+    @staticmethod
+    def _blob_has_enclosed_white_digits(img: np.ndarray, box: dict) -> bool:
+        """「红包围白」校验：box 内是否存在被红色**包围**的白色笔画。
+
+        T1-accuracy（2026-09-08 离线评测，10 样本实测）：
+        真徽章（红底白字）包围白像素 88~102，假阳性 0~13 —— 天然鸿沟。
+        群头像九宫格被当徽章后 OCR 从照片读出 9/11、通讯录笑脸读出 6、
+        通讯录行读出 1 —— 这些假"徽章"的白色像素旁边是照片/白底而非红色。
+        判据：白色像素的 7x7 邻域红色占比 >0.35 才计入，阈值 2% box 面积。
+        校验异常时放行（返回 True），避免误杀真徽章。
+        """
+        try:
+            import cv2
+            x, y, bw, bh = int(box["x"]), int(box["y"]), int(box["w"]), int(box["h"])
+            pad = 2
+            x0 = max(0, x - pad); y0 = max(0, y - pad)
+            x1 = min(img.shape[1], x + bw + pad)
+            y1 = min(img.shape[0], y + bh + pad)
+            roi = img[y0:y1, x0:x1]
+            if roi.size == 0:
+                return False
+            b, g, r = (roi[:, :, 0].astype(np.float32),
+                       roi[:, :, 1].astype(np.float32),
+                       roi[:, :, 2].astype(np.float32))
+            red = ((r > 150) & (r - g > 40) & (r - b > 40)).astype(np.float32)
+            white = ((b > 210) & (g > 210) & (r > 210)).astype(np.float32)
+            kern = np.ones((7, 7), np.float32)
+            red_local = cv2.filter2D(red, -1, kern) / 49.0
+            enclosed = int(((white > 0) & (red_local > 0.35)).sum())
+            need = max(6, int(roi.shape[0] * roi.shape[1] * 0.02))
+            return enclosed >= need
+        except Exception:
+            return True
 
     # =================================================================
     # 红点徽章数字识别（未读数量权威来源）
@@ -1192,14 +1485,26 @@ class RedDotDetector:
                     gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1], 8),
             ]
 
+            # 单字符形近"1"的误读（openclaw detect_unread.py 实测做法）：
+            # 小红点里 OCR 常把 "1" 读成人/|/l/I/i/一/丨/△/▽/◇，直接按未读=1，
+            # 消除「1 条未读被读成 None → 退回纯红点/漏计数」的丢失。
+            _ONE_LOOKALIKES = set("人|lI i一丨△▽◇｜")
+
             def _digits_from(raw: str):
-                """从 OCR 原始文本提取 1~99 的未读数（>99 按 99）。"""
+                """从 OCR 原始文本提取 1~99 的未读数（>99 按 99）。
+
+                T1 纠错（2026-09-08）：单字符形近"1"误读（人/|/l/I/i/一/丨/△/▽/◇）
+                回退为未读=1，直接消除数字徽章漏读。
+                """
                 for tok in re.findall(r"\d+", raw):
                     n = int(tok)
                     if 1 <= n <= 99:
                         return n
                     if n > 99:
                         return 99
+                s = (raw or "").strip()
+                if len(s) == 1 and s in _ONE_LOOKALIKES:
+                    return 1
                 return None
 
             # 变体名 → 中文说明（仅用于日志可读性）
@@ -1207,7 +1512,11 @@ class RedDotDetector:
                 "gray": "灰度", "inv140": "反色140", "otsu_inv": "大津反色",
                 "otsu": "大津", "eq_otsu_inv": "均衡反色", "clahe_otsu_inv": "自适应反色",
             }
-            REC_ONLY_MIN_SCORE = 0.70
+            # 提高到 0.80：红底白字徽章清晰、真值置信度通常很高；0.70 会把「8→3」等
+            # 字形近似误读（置信度约 0.72）直接采信。>0.80 才直接采信，灰区(<0.80)
+            # 不立即 return，落入下方 det+rec 分支交叉复核，两边一致才确认。
+            # （2026-09-08 T1-③ 稳化：过滤弱光/低对比下的数字误读）
+            REC_ONLY_MIN_SCORE = 0.80
             for _name, src, scale in variants:
                 big = cv2.resize(src, None, fx=scale, fy=scale,
                                  interpolation=cv2.INTER_CUBIC)
@@ -1241,6 +1550,10 @@ class RedDotDetector:
                             f"[T1] 徽章OCR命中 变体={_variant_cn.get(_name, _name)} "
                             f"模式=纯识别 未读数={n} 置信度={top_score:.2f}")
                         return n
+                    # P0 同帧短路：rec-only 完全未识别任何内容时，det+rec 对
+                    # 单数字小徽章几乎从不命中且更慢，跳过本变体省时。
+                    if n is None and not pairs:
+                        continue
                 except Exception:
                     pass
                 # —— 原路径：det + rec ——
@@ -1272,84 +1585,34 @@ class RedDotDetector:
             return None
 
     def _nav_avatar_bottom(self, img: np.ndarray) -> Optional[int]:
-        """动态检测左导航头像段的底边 y（不依赖固定比例）。
+        """动态检测左导航头像段的底边 y。
 
-        教训：NAV_AVATAR_SKIP_RATIO=0.115 在 984 高的窗口上过滤线 y=113，
-        罩不住头像红衣区（center_y=122），头像被误检为 nav_badge ——
-        又一次「固定比例跨分辨率失效」。头像段是导航栏顶部第一个大色块，
-        用行像素统计直接找它的底边，跨窗口尺寸稳健。
-        复用 _nav_chat_icon_y 的段检测思路；失败返回 None（调用方回退比例线）。
+        委托 nav_anchors.avatar_bottom_y：段检测切出导航栏各图标段，取头像段
+        （segs[0]）底边。不再自己实现段检测，避免与 chat_icon 逻辑重复、漂移。
+        失败返回 None（调用方回退比例线）。
         """
         try:
-            h, w = img.shape[:2]
-            nav_w = max(40, int(w * 0.045))
-            nav = img[:, 0:nav_w]
-            bg = np.median(nav[0:30], axis=(0, 1))
-            diff = np.abs(nav.astype(np.float32) - bg.astype(np.float32)).max(axis=2)
-            row_cnt = (diff > 30).sum(axis=1)
-            baseline = int(np.median(row_cnt[:60]))
-            threshold = max(20, int(baseline * 1.6))
-            in_seg = False
-            s = 0
-            for y in range(h):
-                if row_cnt[y] > threshold and not in_seg:
-                    in_seg = True
-                    s = y
-                elif row_cnt[y] <= threshold and in_seg:
-                    if y - s >= 14:
-                        return y  # 头像段底边
-                    in_seg = False
-            if in_seg and h - s >= 14:
-                return h
+            y = nav_anchors.avatar_bottom_y(img)
+            self._debug_log(f"导航头像底边 检测={'成功' if y is not None else '失败'} y={y}")
+            return y
         except Exception:
-            pass
-        return None
+            return None
 
     def _nav_chat_icon_y(self, img: np.ndarray) -> Optional[int]:
-        """动态定位「聊天」图标 y 中心（不依赖窗口尺寸/微信版本）。
+        """动态定位「聊天」图标 y 中心（检测优先 + 固定偏移兜底，不依赖窗口比例）。
 
-        微信 4.0 左导航栏从上到下：头像、聊天、通讯录、朋友圈……头像段
-        是最稳定、色块最大的段（cnt 显著高于其它图标）。聊天图标紧邻其下，
-        间距实测为 0.070H（1750 宽窗口 92px、1072 高 76px、712 高 50px）。
-        所以：检测头像段中心 + 0.070H 偏移 = 聊天图标 y。
+        委托 nav_anchors.chat_icon_y：优先取检测到的聊天图标段(segs[1])中心，
+        彻底摆脱 `h*0.152` 这类比例（只在标定窗口高度成立、换分辨率就飘）；
+        检测不足时回退「头像段中心 + 固定间距(≈92px)」，再回退常量。
+        返回 (y, source)，source 用于日志，便于真机校准固定偏移常量。
         """
         try:
-            h, w = img.shape[:2]
-            nav_w = max(40, int(w * 0.045))
-            nav = img[:, 0:nav_w]
-            bg = np.median(nav[0:30], axis=(0, 1))
-            diff = np.abs(nav.astype(np.float32) - bg.astype(np.float32)).max(axis=2)
-            row_cnt = (diff > 30).sum(axis=1)
-            # 导航栏左边缘有恒定非背景列（实测 1750 宽基线=12），阈值须高于基线
-            baseline = int(np.median(row_cnt[:60]))
-            threshold = max(20, int(baseline * 1.6))
-            segs: list[tuple[int, int]] = []
-            in_seg = False
-            s = 0
-            for y in range(h):
-                if row_cnt[y] > threshold and not in_seg:
-                    in_seg = True
-                    s = y
-                elif row_cnt[y] <= threshold and in_seg:
-                    in_seg = False
-                    if y - s >= 14:
-                        segs.append((s, y))
-            if in_seg and h - s >= 14:
-                segs.append((s, h))
-            if not segs:
-                return None
-            # 头像 = 第 1 段（顶部第一个大色块）
-            avatar_center = (segs[0][0] + segs[0][1]) // 2
-            chat_y = avatar_center + int(h * 0.070)
-            # 合理性校验：聊天图标只可能落在 0.08H~0.18H 区间
-            # （头像 0.06H、聊天≈0.152H、通讯录 0.22H）。上限收紧到 0.18H，
-            # 与通讯录 0.22H 留出安全间距，避免误点到通讯录/朋友圈。
-            if not (0.08 * h <= chat_y <= 0.18 * h):
-                return None
-            return chat_y
+            h = img.shape[0]
+            y, src = nav_anchors.chat_icon_y(img, h)
+            self._debug_log(f"导航聊天图标定位 y={y} 来源={src}")
+            return y
         except Exception:
-            pass
-        return None
+            return None
 
     def _ensure_chat_list(self, hwnd: int, w: int, h: int, wm=None) -> bool:
         """主页恢复：单击左导航「聊天」图标，把微信拉回聊天列表。
@@ -1367,17 +1630,30 @@ class RedDotDetector:
           早期用 h*0.085=111 会点中头像；h*0.067=87 也点中头像。
           只有 h*0.152=200 才命中聊天图标。
         """
-        x = int(min(34, max(26, w * 0.019)))
+        x = nav_anchors.nav_click_x(w)  # 导航图标 x：固定偏移，不随窗口宽度缩放
         # 优先动态定位聊天图标（跨尺寸/版本稳健）；失败回退比例估算。
         y = None
         try:
             img0 = self._capture(hwnd)
             if img0 is not None:
+                # P1：已在聊天列表则跳过「确保聊天列表」单击（省点击 + 0.6s + 重扫）。
+                # 红点已落在聊天列表范围即说明当前就在列表，直接放行，
+                # 避免每轮/每次重试都无效单击聊天图标。
+                try:
+                    cds0 = self._scan_contact_dots(img0)
+                    if cds0:
+                        hh = img0.shape[0]
+                        if any(0.10 * hh <= c["center_y"] < 0.70 * hh for c in cds0):
+                            self._debug_log(
+                                "ensure_chat_list: 已在聊天列表(红点就位)，跳过单击")
+                            return True
+                except Exception:
+                    pass
                 y = self._nav_chat_icon_y(img0)
         except Exception:
             y = None
         if y is None:
-            y = int(max(100, h * 0.152))
+            y = nav_anchors.NAV_CHAT_Y  # 聊天图标中心固定像素偏移(标定≈200)，不随高度缩放
         self._debug_log(f"确保聊天列表 点击=({x},{y}) 窗口尺寸={w}x{h}")
         self._do_click(hwnd, x, y, double=False, wm=wm)
         time.sleep(0.6)
@@ -1467,7 +1743,7 @@ class RedDotDetector:
             dy = self._nav_chat_icon_y(img)
             if dy is not None:
                 votes.append(("头像段", int(dy)))
-        votes.append(("比例", int(max(100, h * 0.152))))
+        votes.append(("常量", nav_anchors.NAV_CHAT_Y))
         ys = sorted(v[1] for v in votes)
         y = ys[len(ys) // 2]
         self._debug_log(f"pin 定位融合: {votes} -> y={y} (size={w}x{h})")
@@ -1489,7 +1765,7 @@ class RedDotDetector:
         坐标用 _locate_pin_y 融合定位（跨尺寸/版本稳健），不再单信任何一个
         动态检测。
         """
-        x = int(min(34, max(26, w * 0.019)))
+        x = nav_anchors.nav_click_x(w)  # 导航图标 x：固定偏移，不随窗口宽度缩放
         try:
             import win32gui as _wg
             was_zoomed = bool(_wg.IsZoomed(hwnd))
@@ -2192,6 +2468,39 @@ class RedDotDetector:
         except Exception:
             return None
 
+    def _count_list_red_dots(self, img: np.ndarray) -> Optional[int]:
+        """轻量统计联系人列表区域红色块数量（像素级，不读 OCR 数字）。
+
+        P1 优化：_verify_pin_success 基准帧无 nav 徽章时，用「红点存在性对比」
+        替代 OCR 读数字（OCR 三连约 7~15s，像素计数毫秒级）。仅复像素级
+        _find_dots + 导航栏排除 + 大小过滤，跳过 _read_badge_number 的 OCR。
+        """
+        try:
+            if img is None:
+                return None
+            h, w = img.shape[:2]
+            x_start = max(0, int(w * LIST_X_START_RATIO))
+            x_end = min(w, int(w * LIST_X_END_RATIO))
+            top_skip = max(0, int(h * LIST_TOP_SKIP_RATIO))
+            if x_end <= x_start or h <= top_skip:
+                return 0
+            nav_end_x = max(60, int(w * 0.08))
+            contact_region = img[top_skip:h, x_start:x_end]
+            dots = self._find_dots(contact_region)
+            cnt = 0
+            for d in dots:
+                cx = d.center_x + x_start
+                if cx < nav_end_x:
+                    continue
+                if d.w < self._dot_size_min or d.h < self._dot_size_min:
+                    continue
+                if d.w > self._dot_size_max * 1.2 or d.h > self._dot_size_max * 1.2:
+                    continue
+                cnt += 1
+            return cnt
+        except Exception:
+            return None
+
     def _verify_pin_success(self, hwnd: int, w: int, h: int, wm,
                             before_num: Any,
                             before_img: Any = None) -> Tuple[str, Any]:
@@ -2262,8 +2571,33 @@ class RedDotDetector:
                     self._debug_log(
                         "nav-pin: 像素检测 徽章仍在 -> 降级 OCR 读数字确认")
             else:
-                self._debug_log(
-                    "nav-pin: 基准帧未检测到徽章，像素对比不可用 -> 降级 OCR")
+                # P1：基准帧无徽章时改用「红点存在性对比」而非 OCR 读数字
+                # （OCR 三连约 7~15s；红点像素计数毫秒级）。双击置顶+点顶行
+                # 进入未读会话后，该会话列表红点应消失，数量减少即判成功。
+                before_dots = self._count_list_red_dots(before_img)
+                if before_dots is not None and before_dots > 0:
+                    self._debug_log(
+                        f"nav-pin: 基准帧无徽章，改用红点存在性对比 "
+                        f"(before_dots={before_dots})")
+                    _dot_scanned = False
+                    for _ in range(3):
+                        time.sleep(0.5)
+                        img3 = self._capture(hwnd)
+                        if img3 is None:
+                            continue
+                        _dot_scanned = True
+                        after_dots = self._count_list_red_dots(img3)
+                        if after_dots is not None and after_dots < before_dots:
+                            self._debug_log(
+                                f"nav-pin: 红点存在性 列表红点 {before_dots}"
+                                f"->{after_dots} 减少 -> 成功（免 OCR）")
+                            return "success", before_num
+                    if _dot_scanned:
+                        self._debug_log(
+                            "nav-pin: 红点存在性对比未减少，降级 OCR 读数字确认")
+                else:
+                    self._debug_log(
+                        "nav-pin: 基准帧未检测到徽章且无红点，降级 OCR")
 
         # —— 原路径：OCR 读数字对比（保留全部原语义，作为兜底）——
         best = None
@@ -2489,7 +2823,19 @@ class RedDotDetector:
         except Exception:
             return self._find_dots_fallback(img)
 
-        # BGR 顺序：img[...,2]=R, [...,1]=G, [...,0]=B
+        # —— HSV 双区间主掩膜（openclaw scan_red_bubbles.py 实测微信徽章参数）——
+        # 红色在 HSV 色轮跨 0°，须用「0-10° ∪ 160-180°」两区间或运算；
+        # S>80 / V>80 即可兜住微信红点（比 Quicker 报告 120/70 更贴合微信实际）。
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        hsv_red = (
+            cv2.inRange(hsv, np.array([0, 80, 80]), np.array([10, 255, 255]))
+            | cv2.inRange(hsv, np.array([160, 80, 80]), np.array([180, 255, 255]))
+        )
+        # 闭运算填实徽章内白色数字形成的"洞"（Quicker 报告做法），
+        # 让红点成为实心连通域，面积/宽高比更稳，少漏检。
+        hsv_red = cv2.morphologyEx(hsv_red, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+
+        # BGR 顺序：img[...,2]=R, [...,1]=G, [...,0]=B —— 作为 HSV 漏检时的兜底
         r = img[:, :, 2].astype(np.int16)
         g = img[:, :, 1].astype(np.int16)
         b = img[:, :, 0].astype(np.int16)
@@ -2513,7 +2859,8 @@ class RedDotDetector:
                 & ((r + b) > 0)
                 & (g.astype(np.float64) / ((r + b).astype(np.float64)) > GREEN["g_ratio"])
             )
-        mask = red_mask | purple_mask | green_mask
+        # HSV 为主、RGB 三套为兜底（夜间/特殊主题 HSV 仍漏时）
+        mask = hsv_red | red_mask | purple_mask | green_mask
         if int(mask.sum()) < self._min_pixels:
             return []
 

@@ -273,6 +273,27 @@ select.field{cursor:pointer}
 .queue-item:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);border-color:var(--green-line)}
 .queue-item.empty{justify-content:center;color:var(--ink-3);border-style:dashed;box-shadow:none}
 .queue-item.empty:hover{transform:none;box-shadow:none}
+
+/* ---- 紧凑模式：一条一行，解决"一屏没几条" ----
+   紧凑态只留 头像 + 联系人 + 状态 + 单行摘要，建议回复/进度点收起；
+   点一下整条展开看全文（.expanded），再点收起。 */
+#replyList.dense{gap:6px}
+#replyList.dense .queue-item{padding:7px 11px;gap:9px;align-items:center}
+#replyList.dense .queue-item:hover{transform:none}
+#replyList.dense .queue-avatar{width:28px;height:28px;border-radius:9px;font-size:12px;box-shadow:none}
+#replyList.dense .queue-item .queue-insights,
+#replyList.dense .queue-item .stage-dots{display:none}
+#replyList.dense .queue-item .q-text{
+  display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;
+  overflow:hidden;white-space:normal;font-size:12.5px;color:var(--ink-2)}
+#replyList.dense .queue-item.expanded{padding:13px 15px;align-items:flex-start}
+#replyList.dense .queue-item.expanded .queue-insights,
+#replyList.dense .queue-item.expanded .stage-dots{display:flex}
+#replyList.dense .queue-item.expanded .q-text{
+  display:block;-webkit-line-clamp:unset;max-height:150px;overflow:auto;font-size:13px}
+.queue-item{cursor:pointer}
+#replyList.dense .queue-item .q-expand{display:inline-block}
+.q-expand{display:none;margin-left:6px;color:var(--green);font-size:12px;cursor:pointer}
 .queue-avatar{width:40px;height:40px;border-radius:12px;flex:none;background:var(--grad);
   color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;
   box-shadow:0 4px 10px -3px rgba(7,193,96,.4)}
@@ -437,6 +458,10 @@ select.field{cursor:pointer}
       <button data-view="settings"><span class="ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 21v-6M4 9V3M12 21v-9M12 6V3M20 21v-4M20 11V3"/><path d="M1.5 13h5M9.5 8h5M17.5 15h5"/></svg></span>设置</button>
     </nav>
     <div class="side-foot">
+      <button class="side-link" id="checkUpdate">
+        <span class="ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg></span>
+        检查更新
+      </button>
       <button class="side-link" id="officialSite">
         <span class="ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg></span>
         官网
@@ -521,6 +546,16 @@ select.field{cursor:pointer}
           <button class="chip" data-filter="waiting">处理中</button>
           <button class="chip" data-filter="manual">待人工</button>
           <button class="chip" data-filter="skipped">已跳过</button>
+          <button class="chip" id="queueDensityBtn" data-density="1"
+                  title="紧凑模式：一条一行，点击展开看全文">紧凑</button>
+          <button class="chip" id="summarizeUnreadBtn" title="AI 汇总所有未回复消息（待办/重要/闲聊）">⚡ 汇总未读</button>
+        </div>
+        <div class="card" id="unreadSummaryCard" style="display:none;margin-bottom:14px;padding:14px 16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <strong style="font-size:13.5px">未读汇总</strong>
+            <button class="chip" id="unreadSummaryClose" style="padding:2px 10px;font-size:12px">收起</button>
+          </div>
+          <div id="unreadSummaryBody" style="font-size:12.8px;line-height:1.75;color:var(--ink-2);white-space:pre-wrap"></div>
         </div>
         <div id="replyList">
           <div class="queue-item empty" id="queueEmptyHint">暂无消息记录，启动助手后自动接待的消息会出现在这里。</div>
@@ -601,6 +636,37 @@ select.field{cursor:pointer}
             </div>
           </div>
         </div>
+
+        <div class="card" id="effectStatsCard">
+          <h2>回复效果 <span class="hint">今日统计 · 回复后 30 分钟内客户再来消息记为「继续对话」</span></h2>
+          <div class="counts" style="margin:10px 0">
+            <div class="count-chip"><b id="effectReplies">0</b>今日回复</div>
+            <div class="count-chip"><b id="effectContinued">0</b>继续对话</div>
+            <div class="count-chip"><b id="effectRate">0%</b>继续对话率</div>
+            <div class="count-chip"><b id="effectActive">0</b>近7天活跃联系人</div>
+          </div>
+          <div class="sub" id="effectHourly" style="letter-spacing:2px;font-size:11px"></div>
+        </div>
+
+        <div class="card" id="gapsCard">
+          <h2>知识缺口 <span class="pill" id="gapsPill">0</span>
+            <span class="hint">客户反复问、但知识库答不上的问题——这是你最该补的资料</span></h2>
+          <div id="gapsList"></div>
+          <div class="sub" id="gapsEmpty" style="padding:8px 0">暂无知识缺口。跑几轮自动回复后，这里会自动汇总客户问了但你答不上的问题。</div>
+          <div class="kv-row" style="margin-top:8px">
+            <button class="btn" id="gapsRefreshButton">刷新</button>
+          </div>
+        </div>
+
+        <div class="card" id="kgCardsCard">
+          <h2>知识卡片审核 <span class="pill gray" id="kgCardsPill">0</span>
+            <span class="hint">AI 从聊天记录抽出的实体卡，审核通过才参与回复</span></h2>
+          <div id="kgCardsList"></div>
+          <div class="sub" id="kgCardsEmpty" style="padding:8px 0">还没有知识卡片。配置 Obsidian 后点「🧠 生成知识图谱」即可抽取。</div>
+          <div class="kv-row" style="margin-top:8px">
+            <button class="btn" id="kgCardsRefreshButton">刷新</button>
+          </div>
+        </div>
       </section>
 
       <!-- ======== 话术与规则 ======== -->
@@ -611,6 +677,7 @@ select.field{cursor:pointer}
           <textarea class="field" id="businessIdentityText" rows="7"
             placeholder="例：本店主营××，价格为…；发货时间…；售后政策…"></textarea>
           <div class="kv-row">
+            <button class="btn ghost" id="demoBusinessButton">载入示例资料</button>
             <button class="btn" id="previewBusinessButton">AI 整理预览</button>
             <button class="btn primary" id="completeBusinessButton">AI 自动补全</button>
             <span class="pill gray" id="businessPreviewPill" hidden></span>
@@ -674,6 +741,7 @@ select.field{cursor:pointer}
             <button data-pane="friend">好友申请</button>
             <button data-pane="group">群聊</button>
             <button data-pane="general">通用</button>
+            <button data-pane="obsidian">Obsidian</button>
             <button data-pane="data">数据与诊断</button>
           </nav>
 
@@ -693,9 +761,18 @@ select.field{cursor:pointer}
                   placeholder="sk-…" autocomplete="off" spellcheck="false" />
               </div>
               <div class="row">
-                <div class="info"><b>模型名称</b><span>需支持文字+图片输入</span></div>
-                <input class="field" style="width:320px" id="customTextModel" name="model"
-                  placeholder="qwen-vl-max" autocomplete="off" spellcheck="false" />
+                <div class="info"><b>模型名称</b><span>选预设快速切换，或手填自定义模型名</span></div>
+                <select class="field" id="textModelPreset" style="width:320px" onchange="onModelPresetChange()">
+                  <option value="">— 选择预设模型 —</option>
+                  <option value="qwen-turbo">qwen-turbo（最快，提速首选）</option>
+                  <option value="qwen-flash">qwen-flash（免费额度友好）</option>
+                  <option value="qwen-plus">qwen-plus（均衡）</option>
+                  <option value="qwen-max">qwen-max（最强）</option>
+                  <option value="qwen3.8-27b">qwen3.8-27b（当前，质量高但慢）</option>
+                  <option value="__custom__">✎ 自定义…</option>
+                </select>
+                <input class="field" style="width:320px;margin-top:8px" id="customTextModel" name="model"
+                  placeholder="或手填自定义模型名" autocomplete="off" spellcheck="false" />
               </div>
               <div class="row">
                 <div class="info"><b>OCR 模式</b><span>本地=离线识别；AI=视觉模型；混合=本地优先 AI 兜底</span></div>
@@ -869,9 +946,95 @@ select.field{cursor:pointer}
                 <div class="info"><b>更新记录</b></div>
                 <button class="btn" id="changelogButton">查看</button>
               </div>
+              <h2 style="margin-top:14px">自动回复时段（定时任务）</h2>
+              <div class="row">
+                <div class="info"><b>启用时段限制</b><span>时段外客户消息只记录不回复</span></div>
+                <label class="switch"><input type="checkbox" id="scheduleEnabled" aria-label="启用时段限制" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>时段</b><span>支持跨零点，如 22:00 - 08:00</span></div>
+                <div class="kv-row" style="gap:6px">
+                  <input class="field" style="width:100px" id="scheduleStart" type="time" />
+                  <span style="color:var(--ink-3)">—</span>
+                  <input class="field" style="width:100px" id="scheduleEnd" type="time" />
+                </div>
+              </div>
             </div>
 
             <!-- 数据与诊断 -->
+            <!-- Obsidian 知识库 -->
+            <div class="set-pane card" data-pane="obsidian">
+              <h2>Obsidian 知识库 <span class="pill gray" id="obsidianStatusPill">未配置</span></h2>
+              <p class="sub">把每天的聊天记录沉淀进 Obsidian，并从中提炼知识卡片反哺回复。只读写你指定的子目录，其余笔记一概不碰。</p>
+              <div class="row">
+                <div class="info"><b>启用知识库检索(RAG)</b><span>关闭后直接调用 LLM，不再检索本地知识库（含 LLM 改写/精排增强）</span></div>
+                <label class="switch"><input type="checkbox" id="ragEnabled" aria-label="启用知识库检索RAG" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>启用</b><span>关闭后既不写入也不索引</span></div>
+                <label class="switch"><input type="checkbox" id="obsidianEnabled" aria-label="启用 Obsidian 知识库" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>Vault 路径</b><span>Obsidian 库根目录，例如 D:\Obsidian\MyVault</span></div>
+                <input class="field" style="width:320px" id="obsidianVaultPath" type="text"
+                  placeholder="D:\Obsidian\MyVault" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="kv-row">
+                <button class="btn" id="obsidianPickFolderButton">选择文件夹</button>
+                <button class="btn" id="obsidianValidateButton">检测路径</button>
+                <button class="btn" id="obsidianOpenVaultButton">打开目录</button>
+                <button class="btn" id="kgExtractButton" title="从最近聊天记录抽取实体与关系，生成知识图谱卡片（自动补全相关笔记双链）">🧠 生成知识图谱</button>
+                <button class="btn" id="obsidianDailyReportButton" title="汇总今天全部对话：概览/明细/客户问题/知识缺口">📅 生成今日日报</button>
+              </div>
+              <div class="row" id="kgExtractStatus" style="display:none">
+                <div class="info"><b>图谱抽取</b><span id="kgExtractText"></span></div>
+              </div>
+              <div class="row">
+                <div class="info"><b>对话自动打标签</b><span>同步时用 AI 给每个会话分类（售前/售后/砍价/物流/闲聊），按类分子目录</span></div>
+                <label class="switch"><input type="checkbox" id="obsidianAutoTag" aria-label="对话自动打标签" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>库内目录</b><span>软件只在库根下的这个子目录里读写</span></div>
+                <input class="field" style="width:200px" id="obsidianRootFolder" type="text"
+                  placeholder="VisReply" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="row">
+                <div class="info"><b>对话归档</b><span>原始聊天记录（默认不进检索）</span></div>
+                <input class="field" style="width:200px" id="obsidianDialogueFolder" type="text"
+                  placeholder="对话" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="row">
+                <div class="info"><b>知识卡片</b><span>提炼后的问答，参与检索</span></div>
+                <input class="field" style="width:200px" id="obsidianKnowledgeFolder" type="text"
+                  placeholder="知识" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="row">
+                <div class="info"><b>待补充</b><span>答不上来的问题，你在这里补齐</span></div>
+                <input class="field" style="width:200px" id="obsidianPendingFolder" type="text"
+                  placeholder="待补充" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="row">
+                <div class="info"><b>对话也参与检索</b><span>默认关闭：闲聊会稀释召回质量</span></div>
+                <label class="switch"><input type="checkbox" id="obsidianIndexDialogue" aria-label="对话也参与检索" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>检索增强(LLM改写)</b><span>命中低分时用 AI 把口语改写成书面/同义问法，根治"答非所问"；平时零额外延迟</span></div>
+                <label class="switch"><input type="checkbox" id="ragQueryRewrite" aria-label="检索增强LLM改写" /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>卡片审核</b><span>开启后：AI 抽的实体卡需在知识库页审核通过才参与回复</span></div>
+                <label class="switch"><input type="checkbox" id="obsidianReviewCards" aria-label="卡片审核" checked /><i></i></label>
+              </div>
+              <div class="row">
+                <div class="info"><b>变更检测间隔</b><span>秒；你改了笔记就自动重载索引</span></div>
+                <input class="field" style="width:120px" id="obsidianPollSeconds" type="number" min="2" max="300" step="1" />
+              </div>
+              <div class="kv-row">
+                <button class="btn primary" id="obsidianSyncButton">立即同步今天的对话</button>
+              </div>
+              <div id="obsidianStatusText" class="sub" style="margin-top:8px"></div>
+            </div>
+
             <div class="set-pane card" data-pane="data">
               <h2>数据与诊断</h2>
               <div class="row">
@@ -937,6 +1100,34 @@ select.field{cursor:pointer}
   </div>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
+
+<div class="update-mask" id="updateMask" role="alertdialog" aria-modal="true" aria-labelledby="updateTitle">
+  <div class="update-box">
+    <h3 id="updateTitle">发现新版本</h3>
+    <p class="sub" id="updateSize"></p>
+    <div class="update-notes" id="updateNotes"></div>
+    <div class="update-progress" id="updateProgressWrap" style="display:none">
+      <div class="update-bar"><div class="update-bar-fill" id="updateProgressBar"></div></div>
+    </div>
+    <div class="acts">
+      <button class="btn ghost" id="updateLater">稍后</button>
+      <button class="btn primary" id="updateNow">立即更新</button>
+    </div>
+  </div>
+</div>
+<style>
+.update-mask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:60}
+.update-mask.open{display:flex}
+.update-box{width:430px;max-width:92vw;background:#11201c;border:1px solid rgba(45,212,191,.25);border-radius:14px;padding:22px;color:#e2f2e8;box-shadow:0 18px 50px rgba(0,0,0,.5)}
+.update-box h3{margin:0 0 4px;font-size:17px;color:#fff}
+.update-box .sub{margin:0 0 12px;font-size:12px;color:rgba(226,242,232,.55)}
+.update-notes{max-height:190px;overflow:auto;font-size:13px;line-height:1.65;color:rgba(226,242,232,.85);background:rgba(0,0,0,.22);border-radius:10px;padding:12px;word-break:break-word}
+.update-progress{margin:14px 0 2px}
+.update-bar{height:8px;background:rgba(255,255,255,.1);border-radius:6px;overflow:hidden}
+.update-bar-fill{height:100%;width:0;background:linear-gradient(90deg,#2dd4bf,#3b82f6);transition:width .25s}
+.update-box .acts{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+.update-box .btn{min-width:96px}
+</style>
 
 <script>
 "use strict";
@@ -1133,6 +1324,7 @@ window.appendReplyRow = function(item){
     for (var i = 0; i < spans.length; i++) spans[i].className = (i <= step) ? "done" : "";
   }
   while (list.children.length > 60) list.removeChild(list.lastChild);
+  if (typeof bindQueueRow === "function") bindQueueRow(art);
   applyQueueFilter();
 };
 
@@ -1185,6 +1377,47 @@ window.setLearningStatus = function(text, kind){
   on("hideWechatButton", function(){ setWechatSeg("hideWechatButton"); call("hideWechat", {}, function(raw){ toast(resultOf(raw).message || ""); }); });
   on("helpLink", function(e){ e.preventDefault(); call("openHelp", {}, function(raw){ var d = resultOf(raw); if (d && d.message) toast(d.message); }); });
   on("officialSite", function(e){ if(e) e.preventDefault(); call("openExternal", {url:"https://pushwebly.com/play/DViFxMMjLa-45HIeMLSYDYEZ/"}, function(raw){ var d = resultOf(raw); if (d && d.message) toast(d.message); }); });
+
+  /* ---------- 在线更新 ---------- */
+  function showUpdateModal(info){
+    var m = $("updateMask"); if (!m) return;
+    $("updateTitle").textContent = "发现新版本 v" + (info.version || "");
+    $("updateNotes").innerHTML = esc((info.release_notes || "本次更新包含功能优化与问题修复。")).replace(/\n/g, "<br>");
+    var mb = info.size ? (info.size / 1048576).toFixed(1) + " MB" : "";
+    $("updateSize").textContent = (info.method === "full" ? "完整安装包" : "增量更新") + (mb ? " · 约 " + mb : "");
+    $("updateProgressWrap").style.display = "none";
+    $("updateNow").disabled = false; $("updateNow").textContent = "立即更新";
+    m.classList.add("open");
+  }
+  function closeUpdateModal(){ var m = $("updateMask"); if (m) m.classList.remove("open"); }
+  window.__onUpdateProgress = function(pct){
+    var w = $("updateProgressWrap"); if (!w) return; w.style.display = "";
+    var b = $("updateProgressBar"); if (b) b.style.width = Math.max(0, Math.min(100, pct)) + "%";
+    $("updateNow").disabled = true; $("updateNow").textContent = "更新中… " + Math.max(0, Math.min(100, pct)) + "%";
+  };
+  window.__onUpdateRestarting = function(){
+    var n = $("updateNow"); if (n) n.textContent = "即将重启…";
+    var b = $("updateProgressBar"); if (b) b.style.width = "100%";
+  };
+  function doUpdate(){
+    call("startUpdate", {}, function(raw){ var d = resultOf(raw);
+      if (!d.ok) { toast(d.message || "更新启动失败"); closeUpdateModal(); } });
+  }
+  function checkForUpdatesSilent(){
+    call("checkUpdate", {}, function(raw){ var d = resultOf(raw);
+      if (d && d.ok && d.update_available) showUpdateModal(d); });
+  }
+  function checkForUpdatesManual(){
+    toast("正在检查更新…");
+    call("checkUpdate", {}, function(raw){ var d = resultOf(raw);
+      if (!d.ok) { toast(d.message || "检查失败"); return; }
+      if (d.update_available) showUpdateModal(d);
+      else toast("已是最新版本 v" + (d.current || "")); });
+  }
+  on("checkUpdate", function(e){ if (e) e.preventDefault(); checkForUpdatesManual(); });
+  on("updateLater", function(){ closeUpdateModal(); });
+  on("updateNow", function(){ doUpdate(); });
+  window.addEventListener("pywebviewready", function(){ setTimeout(checkForUpdatesSilent, 2000); });
   function setWechatSeg(id){
     var s = document.getElementById("showWechatButton"), h = document.getElementById("hideWechatButton");
     if (s) s.classList.toggle("active", id === "showWechatButton");
@@ -1207,12 +1440,64 @@ function applyQueueFilter(){
     it.style.display = show ? "" : "none";
   });
 }
+/* ---------- 消息队列：紧凑/完整 密度切换 ---------- */
+var QUEUE_DENSE_KEY = "visreply.queue.dense";
+function setQueueDense(on){
+  var list = $("replyList"); if (!list) return;
+  list.classList.toggle("dense", !!on);
+  var btn = $("queueDensityBtn");
+  if (btn){ btn.textContent = on ? "紧凑" : "完整"; btn.dataset.density = on ? "1" : "0"; }
+  try { localStorage.setItem(QUEUE_DENSE_KEY, on ? "1" : "0"); } catch(e){}
+}
+function bindQueueRow(art){
+  if (!art || art.dataset.bound === "1") return;
+  art.dataset.bound = "1";
+  art.addEventListener("click", function(ev){
+    // 只有紧凑模式下才需要点开；完整模式本来就全显示
+    if (!$("replyList") || !$("replyList").classList.contains("dense")) return;
+    if (ev.target && ev.target.closest && ev.target.closest("a")) return;
+    art.classList.toggle("expanded");
+  });
+}
 (function initQueue(){
   document.querySelectorAll(".chip[data-filter]").forEach(function(c){
     c.addEventListener("click", function(){
       document.querySelectorAll(".chip[data-filter]").forEach(function(x){ x.classList.toggle("active", x === c); });
       applyQueueFilter();
     });
+  });
+  var dense = "1";
+  try { dense = localStorage.getItem(QUEUE_DENSE_KEY) || "1"; } catch(e){}
+  setQueueDense(dense !== "0");
+  var db = $("queueDensityBtn");
+  if (db) db.addEventListener("click", function(){
+    var list = $("replyList");
+    setQueueDense(!(list && list.classList.contains("dense")));
+  });
+  document.querySelectorAll("#replyList .queue-item:not(.empty)").forEach(bindQueueRow);
+  /* ---- 一键汇总未读 ---- */
+  var sb = $("summarizeUnreadBtn");
+  if (sb) sb.addEventListener("click", function(){
+    var card = $("unreadSummaryCard"), body = $("unreadSummaryBody");
+    if (!card || !body) return;
+    sb.disabled = true; sb.textContent = "⏳ 正在汇总…";
+    card.style.display = "block";
+    body.textContent = "正在收集未读消息并调用模型，请稍候（约 5~20 秒）…";
+    call("summarizeUnread", {}, function(raw){
+      sb.disabled = false; sb.textContent = "⚡ 汇总未读";
+      var d = resultOf(raw) || {};
+      if (d.summary) {
+        body.textContent = d.summary;
+        card.style.display = "block";
+      } else {
+        body.textContent = d.message || "暂无可汇总的内容。";
+        card.style.display = "block";
+      }
+    });
+  });
+  var sc = $("unreadSummaryClose");
+  if (sc) sc.addEventListener("click", function(){
+    var card = $("unreadSummaryCard"); if (card) card.style.display = "none";
   });
 })();
 
@@ -1350,7 +1635,7 @@ function refreshImages(){
         lastQA = { question: d.question || q.trim(), answer: d.reply || "" };
         if (box) box.hidden = false;
         if (qEl) qEl.textContent = lastQA.question;
-        if (aEl) aEl.textContent = lastQA.reply || "（空回复）";
+        if (aEl) aEl.textContent = d.reply || "（空回复）";
         if (hint2) hint2.textContent = d.source ? ("来源：" + d.source) : "生成完成。";
         if (adopt) adopt.disabled = false;
       } else {
@@ -1392,6 +1677,17 @@ function refreshImages(){
         toast(d.message || "整理失败");
       }
     });
+  });
+  on("demoBusinessButton", function(){
+    var ta = $("businessIdentityText");
+    if (ta) ta.value = (
+      "本店主营手工定制生日蛋糕与甜品，支持同城配送。\n" +
+      "价格：6 寸基础款 128 元，8 寸 168 元，加水果或裱花每款 +30 元。\n" +
+      "发货/配送：当天 16:00 前下单，次日送达；同城满 99 元免配送费。\n" +
+      "售后：收到货 2 小时内发现损坏可拍照退换。\n" +
+      "预约：可提前 3 天预约，节假日建议尽早下单。"
+    );
+    toast("已载入示例业务资料，点「AI 整理预览」查看效果");
   });
   on("businessApplyButton", function(){
     if (!_previewCache) return;
@@ -1511,6 +1807,93 @@ function loadHistory(){
   if(navBtn) navBtn.addEventListener('click', loadHistory);
 })();
 
+/* ===== 知识缺口 / 卡片审核 / 回复效果（P0+P1） ===== */
+(function initInsights(){
+  function esc(s){ var d=document.createElement("i"); d.textContent=s==null?"":String(s); return d.innerHTML; }
+  function loadGaps(){
+    call("gapsList", {}, function(raw){
+      var d = resultOf(raw);
+      var list = $("gapsList"), empty = $("gapsEmpty"), pill = $("gapsPill");
+      if(!list) return;
+      var gaps = d.gaps || [];
+      if (pill) pill.textContent = gaps.length;
+      if (empty) empty.hidden = gaps.length > 0;
+      list.innerHTML = gaps.map(function(g){
+        return '<div class="row" style="align-items:flex-start">'
+          + '<div class="info"><b>' + esc(g.q) + '</b>'
+          + '<span>问了 ' + (g.hits||1) + ' 次 · 最近 ' + esc(g.last||"") + '</span></div>'
+          + '<div class="kv-row" style="gap:6px">'
+          + '<button class="btn primary" data-gapact="pending" data-q="' + esc(g.q) + '">写入待补充</button>'
+          + '<button class="btn" data-gapact="dismiss" data-q="' + esc(g.q) + '">忽略</button>'
+          + '</div></div>';
+      }).join("");
+    });
+  }
+  if ($("gapsList")) $("gapsList").addEventListener("click", function(e){
+    var b = e.target.closest("button[data-gapact]"); if(!b) return;
+    call("gapAction", {query: b.getAttribute("data-q"), action: b.getAttribute("data-gapact")}, function(raw){
+      var d = resultOf(raw); toast(d.message || (d.ok ? "已完成" : "操作失败"));
+      loadGaps();
+    });
+  });
+  on("gapsRefreshButton", loadGaps);
+
+  function loadCards(){
+    call("kgListCards", {}, function(raw){
+      var d = resultOf(raw);
+      var list = $("kgCardsList"), empty = $("kgCardsEmpty"), pill = $("kgCardsPill");
+      if(!list) return;
+      var cards = d.cards || [];
+      if (pill) pill.textContent = cards.length;
+      if (empty) empty.hidden = cards.length > 0;
+      list.innerHTML = cards.map(function(c){
+        var st = c.status || "待审";
+        var color = st === "已确认" ? "var(--green)" : (st === "忽略" ? "var(--ink-3)" : "var(--warn, #c80)");
+        var acts = st === "已确认"
+          ? '<button class="btn" data-kgset="待审" data-n="' + esc(c.name) + '">撤回审核</button>'
+          : '<button class="btn primary" data-kgset="已确认" data-n="' + esc(c.name) + '">通过审核</button>'
+            + '<button class="btn" data-kgset="忽略" data-n="' + esc(c.name) + '">忽略</button>';
+        return '<div class="row" style="align-items:flex-start">'
+          + '<div class="info"><b>' + esc(c.name) + '</b>'
+          + '<span style="color:' + color + '">' + esc(st) + '</span>'
+          + '<span>' + esc(c.type||"") + (c.aliases && c.aliases.length ? " · 别名: " + esc(c.aliases.join("/")) : "")
+          + (c.related && c.related.length ? " · 关联: " + esc(c.related.join("/")) : "") + '</span></div>'
+          + '<div class="kv-row" style="gap:6px">' + acts + '</div></div>';
+      }).join("");
+    });
+  }
+  if ($("kgCardsList")) $("kgCardsList").addEventListener("click", function(e){
+    var b = e.target.closest("button[data-kgset]"); if(!b) return;
+    call("kgSetCardStatus", {name: b.getAttribute("data-n"), status: b.getAttribute("data-kgset")}, function(raw){
+      var d = resultOf(raw); toast(d.message || (d.ok ? "已更新" : "操作失败"));
+      loadCards();
+    });
+  });
+  on("kgCardsRefreshButton", loadCards);
+
+  function loadEffect(){
+    call("effectStats", {}, function(raw){
+      var d = resultOf(raw);
+      if (d.replies_today == null) return;
+      $("effectReplies") && ($("effectReplies").textContent = d.replies_today);
+      $("effectContinued") && ($("effectContinued").textContent = d.continued);
+      $("effectRate") && ($("effectRate").textContent = Math.round((d.continued_rate||0)*100) + "%");
+      $("effectActive") && ($("effectActive").textContent = d.active_contacts_7d);
+      var h = $("effectHourly");
+      if (h && d.hourly){
+        var max = Math.max.apply(null, d.hourly.concat([1]));
+        h.innerHTML = d.hourly.map(function(v, i){
+          var n = Math.round((v/max)*8);
+          return esc(String(i).padStart(2,"0")) + " " + ("█".repeat(n) || "·") + "<br>";
+        }).join("");
+      }
+    });
+  }
+
+  var kbBtn = document.querySelector('.nav button[data-view="knowledge"]');
+  if (kbBtn) kbBtn.addEventListener("click", function(){ loadGaps(); loadCards(); loadEffect(); });
+})();
+
 var skipLoaded = false;
 function loadSkipList(){
   call("get_skip_contacts", {}, function(raw){
@@ -1575,7 +1958,22 @@ function collectAllSettings(){
     business_identity_text: ($("businessIdentityText") || {}).value || "",
     ui_auto_start: switchOn("startupAutoStart"),
     ui_auto_update_check: switchOn("autoUpdateCheck"),
-    ui_screenshot_retention: fieldValue("screenshotRetention") || "7"
+    ui_screenshot_retention: fieldValue("screenshotRetention") || "7",
+    obsidian_enabled: switchOn("obsidianEnabled"),
+    obsidian_vault_path: fieldValue("obsidianVaultPath"),
+    obsidian_root_folder: fieldValue("obsidianRootFolder") || "VisReply",
+    obsidian_dialogue_folder: fieldValue("obsidianDialogueFolder") || "对话",
+    obsidian_knowledge_folder: fieldValue("obsidianKnowledgeFolder") || "知识",
+    obsidian_pending_folder: fieldValue("obsidianPendingFolder") || "待补充",
+    obsidian_index_dialogue: switchOn("obsidianIndexDialogue"),
+    obsidian_auto_tag: switchOn("obsidianAutoTag"),
+    obsidian_review_cards: switchOn("obsidianReviewCards"),
+    rag_query_rewrite: switchOn("ragQueryRewrite"),
+    rag_enabled: switchOn("ragEnabled"),
+    obsidian_poll_seconds: parseInt(fieldValue("obsidianPollSeconds") || "5", 10),
+    schedule_enabled: switchOn("scheduleEnabled"),
+    schedule_start: fieldValue("scheduleStart") || "09:00",
+    schedule_end: fieldValue("scheduleEnd") || "22:00"
   };
 }
 
@@ -1625,6 +2023,21 @@ function applySettingsToForm(d){
   setSwitch("startupAutoStart", d.ui_auto_start);
   setSwitch("autoUpdateCheck", d.ui_auto_update_check);
   if (d.ui_screenshot_retention != null) $("screenshotRetention").value = String(d.ui_screenshot_retention);
+  setSwitch("obsidianEnabled", d.obsidian_enabled);
+  if (d.obsidian_vault_path != null) $("obsidianVaultPath").value = d.obsidian_vault_path || "";
+  if ($("obsidianRootFolder")) $("obsidianRootFolder").value = d.obsidian_root_folder || "VisReply";
+  if ($("obsidianDialogueFolder")) $("obsidianDialogueFolder").value = d.obsidian_dialogue_folder || "对话";
+  if ($("obsidianKnowledgeFolder")) $("obsidianKnowledgeFolder").value = d.obsidian_knowledge_folder || "知识";
+  if ($("obsidianPendingFolder")) $("obsidianPendingFolder").value = d.obsidian_pending_folder || "待补充";
+  setSwitch("obsidianIndexDialogue", d.obsidian_index_dialogue);
+  if (d.obsidian_auto_tag != null) setSwitch("obsidianAutoTag", d.obsidian_auto_tag);
+  if (d.obsidian_review_cards != null) setSwitch("obsidianReviewCards", d.obsidian_review_cards);
+  if (d.rag_query_rewrite != null) setSwitch("ragQueryRewrite", d.rag_query_rewrite);
+  if (d.rag_enabled != null) setSwitch("ragEnabled", d.rag_enabled);
+  if (d.obsidian_poll_seconds != null) $("obsidianPollSeconds").value = String(d.obsidian_poll_seconds);
+  setSwitch("scheduleEnabled", d.schedule_enabled);
+  if ($("scheduleStart")) $("scheduleStart").value = d.schedule_start || "09:00";
+  if ($("scheduleEnd")) $("scheduleEnd").value = d.schedule_end || "22:00";
   if (d.api_key) {
     var hint = $("modelKeyHint"); if (hint) hint.textContent = "已保存 API Key（仅本机）";
   }
@@ -1634,6 +2047,15 @@ function loadSettingsIntoForm(){
   call("loadSettings", {}, function(raw){
     applySettingsToForm(resultOf(raw));
   });
+}
+
+// 模型预设下拉：选中预设填入输入框；选「自定义」则清空以便手填
+function onModelPresetChange(){
+  var sel = $("textModelPreset"); if (!sel) return;
+  var v = sel.value;
+  var input = $("customTextModel"); if (!input) return;
+  if (v === "__custom__") { input.value = ""; input.focus(); }
+  else if (v) { input.value = v; }
 }
 
 (function initSettings(){
@@ -1652,6 +2074,83 @@ function loadSettingsIntoForm(){
       toast(d.message || (d.ok ? "模型可用" : "模型不可用"));
     });
   });
+  function setObsidianStatus(text, kind){
+    var el = $("obsidianStatusText");
+    if (el) el.textContent = text || "";
+    var pill = $("obsidianStatusPill");
+    if (pill && kind) {
+      pill.textContent = ({ ok: "已就绪", warn: "待配置", bad: "异常" })[kind] || "未配置";
+      pill.className = "pill " + (({ ok: "green", warn: "gray", bad: "red" })[kind] || "gray");
+    }
+  }
+  on("obsidianPickFolderButton", function(){
+    call("obsidianPickFolder", {}, function(raw){
+      var d = resultOf(raw);
+      if (d.ok && d.path) {
+        $("obsidianVaultPath").value = d.path;
+        setObsidianStatus("已选择：" + d.path + "（记得点保存设置）", "warn");
+      } else if (d.message) { toast(d.message); }
+    });
+  });
+  on("obsidianValidateButton", function(){
+    var p = fieldValue("obsidianVaultPath");
+    if (!p.trim()) { setObsidianStatus("先填写或选择 Vault 路径", "warn"); return; }
+    setObsidianStatus("检测中…", "warn");
+    call("obsidianValidate", {
+      vault_path: p,
+      root_folder: fieldValue("obsidianRootFolder") || "VisReply",
+      dialogue_folder: fieldValue("obsidianDialogueFolder") || "对话",
+      knowledge_folder: fieldValue("obsidianKnowledgeFolder") || "知识",
+      pending_folder: fieldValue("obsidianPendingFolder") || "待补充"
+    }, function(raw){
+      var d = resultOf(raw);
+      var msg = d.message || (d.ok ? "路径可用" : "路径不可用");
+      if (d.ok && d.created && d.created.length) msg += "（已创建：" + d.created.join("、") + "）";
+      setObsidianStatus(msg, d.ok ? "ok" : "bad");
+    });
+  });
+  on("obsidianOpenVaultButton", function(){
+    call("obsidianOpenVault", { vault_path: fieldValue("obsidianVaultPath") }, function(raw){
+      var d = resultOf(raw);
+      if (!d.ok) toast(d.message || "打开失败");
+    });
+  });
+  on("obsidianSyncButton", function(){
+    setObsidianStatus("正在同步今天的对话…", "warn");
+    call("obsidianSyncNow", {}, function(raw){
+      var d = resultOf(raw);
+      setObsidianStatus(d.message || (d.ok ? "同步完成" : "同步失败"), d.ok ? "ok" : "bad");
+      toast(d.message || (d.ok ? "已同步" : "同步失败"));
+    });
+  });
+  on("obsidianDailyReportButton", function(){
+    var btn = $("obsidianDailyReportButton");
+    if (btn) { btn.disabled = true; btn.textContent = "⏳ 生成中…"; }
+    setObsidianStatus("正在汇总今天的对话生成日报…", "warn");
+    call("obsidianDailyReport", {}, function(raw){
+      if (btn) { btn.disabled = false; btn.textContent = "📅 生成今日日报"; }
+      var d = resultOf(raw) || {};
+      setObsidianStatus(d.message || (d.ok ? "日报已生成" : "日报生成失败"), d.ok ? "ok" : "bad");
+      toast(d.message || (d.ok ? "日报已生成" : "日报生成失败"));
+    });
+  });
+  on("kgExtractButton", function(){
+    var btn = $("kgExtractButton"), st = $("kgExtractStatus"), tx = $("kgExtractText");
+    if (btn) { btn.disabled = true; btn.textContent = "⏳ 抽取中…"; }
+    if (st) st.style.display = "flex";
+    if (tx) tx.textContent = "正在从最近聊天记录抽取实体与关系，请稍候（约 10~40 秒）…";
+    call("kgExtractNow", {}, function(raw){
+      if (btn) { btn.disabled = false; btn.textContent = "🧠 生成知识图谱"; }
+      var d = resultOf(raw) || {};
+      var msg = d.message || (d.ok ? "抽取完成" : "抽取失败");
+      if (d.ok && d.entities != null) {
+        msg = "实体 " + d.entities + " 个 · 关系 " + d.relations + " 条 · 丢弃畸形 " +
+              (d.dropped || 0) + " 条。" + msg;
+      }
+      if (tx) tx.textContent = msg;
+      toast(d.ok ? "知识图谱已生成" : (d.message || "抽取失败"));
+    });
+  });
   document.querySelectorAll("#foregroundKeyboardMode .mode-option").forEach(function(b){
     b.addEventListener("click", function(){
       document.querySelectorAll("#foregroundKeyboardMode .mode-option").forEach(function(x){ x.classList.toggle("active", x === b); });
@@ -1666,6 +2165,16 @@ function loadSettingsIntoForm(){
       b.addEventListener("change", function(){ a.checked = b.checked; });
     }
   });
+  // 好友申请功能尚未实现：点击开关即提示「等待开发」，并复原开关状态。
+  var friendSw = $("friendAutoAccept");
+  if (friendSw) {
+    friendSw.addEventListener("change", function(){
+      if (friendSw.checked) {
+        friendSw.checked = false;
+        toast("好友申请功能：等待开发！");
+      }
+    });
+  }
 })();
 
 /* ---------- 数据与诊断 ---------- */

@@ -1,7 +1,96 @@
+import os
+import re
 import yaml
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
+
+
+# ================================================================
+# 密钥外置（安全修复#1）
+# ----------------------------------------------------------------
+# config.yaml 里不再存放明文 api_key，只写 `${VAR}` 占位；真实值从
+# 环境变量或项目根的 .env 读取。这样：
+#   - 源码仓库 / 打包产物里都搜不到 sk- 明文（避免密钥随安装包外泄）
+#   - .env 不进版本库、不被打包，密钥只在本地存在
+# ================================================================
+
+# 项目根目录（my_agent）
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# 整值引用 ${VAR}，以及字符串内嵌 ${VAR}
+_ENV_WHOLE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+_ENV_INLINE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+# 默认环境变量名：config.yaml 里 api_key 为空时的兜底来源
+_DEFAULT_SECRET_KEYS = ("VISREPLY_API_KEY", "ALIYUN_API_KEY")
+
+
+def _load_dotenv(path: Optional[Path] = None) -> None:
+    """加载项目根 .env（简易 loader，零第三方依赖）。
+
+    已存在的系统环境变量优先，不被 .env 覆盖。
+    """
+    p = Path(path) if path else (_PROJECT_ROOT / ".env")
+    try:
+        if not p.exists():
+            return
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k and k not in os.environ:
+                os.environ[k] = v
+    except Exception:
+        pass
+
+
+def _expand_env_value(value: Any) -> Any:
+    """把配置里的 ${VAR} 引用替换为环境变量真实值（支持 dict/list 递归）。"""
+    if isinstance(value, str):
+        stripped = value.strip()
+        m = _ENV_WHOLE.match(stripped)
+        if m:
+            return os.environ.get(m.group(1), "")
+        return _ENV_INLINE.sub(
+            lambda mm: os.environ.get(mm.group(1), ""), value)
+    if isinstance(value, dict):
+        return {k: _expand_env_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env_value(v) for v in value]
+    return value
+
+
+def _inject_secret_from_env(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """model 段 api_key 为空时，用环境变量兜底填充。
+
+    保证「config.yaml 里留空」也能正常工作，不必强制写 ${VAR}。
+    """
+    for section in ("vision_model", "text_model"):
+        sec = raw.get(section)
+        if not isinstance(sec, dict):
+            continue
+        cur = str(sec.get("api_key") or "").strip()
+        if cur:
+            continue
+        for env_name in _DEFAULT_SECRET_KEYS:
+            val = str(os.environ.get(env_name) or "").strip()
+            if val:
+                sec["api_key"] = val
+                break
+    return raw
+
+
+def expand_env_config(raw: Any) -> Any:
+    """对外入口：供其它自行 yaml.safe_load 的模块复用同一套展开逻辑。"""
+    _load_dotenv()
+    raw = _expand_env_value(raw)
+    if isinstance(raw, dict):
+        raw = _inject_secret_from_env(raw)
+    return raw
 
 
 @dataclass
@@ -170,6 +259,29 @@ class Settings:
     sop_enabled: bool = False
 
 
+def _pkg_version() -> str:
+    """版本唯一真相源：src/__init__.py 的 __version__。
+
+    【2026-09-07 修复左下角 0.0.0】原实现用 Path(__file__) 读磁盘源文件，
+    打包后 settings.py 进 PYZ、_internal/src/__init__.py 不存在 → 读文件
+    必失败 → 恒 0.0.0。改为：优先 import（源码/打包都通），磁盘读取仅作兜底。
+    """
+    try:
+        from src import __version__ as _v
+        return str(_v)
+    except Exception:
+        pass
+    try:
+        p = Path(__file__).resolve().parents[1] / "__init__.py"
+        t = p.read_text(encoding="utf-8")
+        m = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', t)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return "0.0.0"
+
+
 def load_settings(config_path: Optional[str] = None) -> Settings:
     settings = Settings()
     if config_path is None:
@@ -189,6 +301,9 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         with open(config_path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
         if raw:
+            # 安全修复#1：加载 .env 并展开 ${VAR}/空值兜底，
+            # 使 api_key 可以不以明文出现在 config.yaml 里。
+            raw = expand_env_config(raw)
             settings = _apply_override(settings, raw)
 
     # 回复规则里的额外跳过联系人合并进系统联系人（去重保序），
@@ -207,13 +322,18 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         for name in settings.wechat.contact_blacklist:
             if name and name not in seen:
                 settings.wechat.system_contacts.append(name)
+
+    # 版本号唯一真相源：始终以 src/__init__.py 的 __version__ 为准，
+    # 忽略 config.yaml 的 app.version（避免显示过时版本）。
+    settings.app_version = "v" + _pkg_version()
     return settings
 
 
 def _apply_override(settings: Settings, raw: Dict[str, Any]) -> Settings:
     if raw.get("app"):
         settings.app_name = raw["app"].get("name", settings.app_name)
-        settings.app_version = raw["app"].get("version", settings.app_version)
+        # 注意：app_version 不再从 config.yaml 读取（易与代码版本脱节），
+        # 统一由 src/__init__.py 的 __version__ 驱动，见 load_settings 末尾。
 
     if raw.get("vision_model"):
         _apply_to(settings.vision_model, raw["vision_model"])

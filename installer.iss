@@ -5,13 +5,17 @@
 ; ============================================================
 
 #define MyAppName "VisReply"
-#define MyAppVersion "1.6.0"
+#define MyAppVersion "1.6.11"
 #define MyAppPublisher "漩涡鸣人"
 #define MyAppExeName "WeChatAIAssistant.exe"
 
 [Setup]
 ; 纯用户级安装：不需要管理员权限，装到当前用户目录（与 DefaultDirName 配套）
 PrivilegesRequired=lowest
+; 在线更新（整包静默安装）时，强制关闭占用 {app} 文件的进程（WebView2 渲染进程、
+; 杀软扫描锁、残留实例等），否则 Inno 无法替换文件会排队到「下次重启」，导致更新后版本号不变。
+CloseApplications=yes
+RestartApplications=no
 ;GUID 仅用于标识本软件（卸载/升级用），保持不变即可
 AppId={{8E5C2A10-6B7D-4F3E-9A21-3C8D5F0B7E44}
 AppName={#MyAppName}
@@ -23,7 +27,7 @@ DefaultDirName={localappdata}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 ; 输出目录和安装包文件名
 OutputDir=installer_output
-OutputBaseFilename=VisReply_Setup
+OutputBaseFilename=VisReply_Setup_{#MyAppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 ; 支持简体中文安装向导
@@ -39,8 +43,15 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 [Files]
 ; onedir 版：安装后是带 _internal/、DLL、resources 的完整软件目录
 ; （启动快，无需 onefile 每次解压 226MB）
+; 【2026-09-08 修复】整包更新(在线更新走 full 时)原会用打包时脱敏(空 key)的
+;   config.yaml 整体覆盖用户已配置好的 config → api_key 丢失、全部配置被重置。
+;   修复：通配拷贝排除 config.yaml，单独用 onlyifdoesntexist 处理 ——
+;   仅在首次安装写入默认配置，之后永远保留用户那份(含 api_key)。
 Source: "dist_onedir8\WeChatAIAssistant\*"; DestDir: "{app}"; \
-    Flags: ignoreversion recursesubdirs createallsubdirs
+    Excludes: "config.yaml"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 仅首次安装写入默认 config.yaml；已存在则保留用户配置（含 api_key）
+Source: "dist_onedir8\WeChatAIAssistant\config.yaml"; DestDir: "{app}"; \
+    Flags: onlyifdoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

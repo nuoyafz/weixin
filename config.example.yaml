@@ -8,7 +8,9 @@
 
 app:
   name: "VisReply"
-  version: "v1.0.0"
+  version: "v1.6.11"
+  # 在线更新服务器地址（静态托管 version.json + 增量包），发布前改成你的真实地址
+  update_server: "https://update.example.com/visreply/update"
 
 # ============================================
 # 视觉模型配置（用于OCR + 多模态理解）
@@ -16,7 +18,7 @@ app:
 vision_model:
   provider: openai_compatible
   base_url: "https://llm-b1hoacm0oh3hm1oa.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-  api_key: "sk-你的密钥"
+  api_key: "YOUR_API_KEY"
   api_key_required: false              # 是否需要密钥
   api_style: openai_compatible
   model: qwen3.8-27b
@@ -41,7 +43,7 @@ vision_model:
 text_model:
   provider: "openai_compatible"        # 提供商
   base_url: "https://llm-b1hoacm0oh3hm1oa.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-  api_key: "sk-你的密钥"
+  api_key: "YOUR_API_KEY"
   api_key_required: true               # 需要密钥
   model: qwen3.8-27b
   timeout_seconds: 20                  # 文本模型超时(秒)：快速失败，避免慢接口把单轮拖到 30~40s(原110)
@@ -223,7 +225,7 @@ ui:
   log_level: "normal"                  # 日志级别
 
   auto_start: false
-  auto_update_check: false
+  auto_update_check: true
   screenshot_retention_days: 7
 # ============================================
 # 业务信息（AI 回复提示词注入的店铺上下文）

@@ -159,6 +159,8 @@ class ObserveService:
             model=tm_cfg.get("model", ""),
             config=self.config,
         )
+        # ⑥ 冷启动预热：发一条最小 dummy 请求，提前完成建连/服务端冷启动
+        self._prewarm_text_model()
 
         # 本地 OCR 分析（vision 未配置时的主读取路径，惰性初始化）
         self._local_ocr = None
@@ -1248,6 +1250,92 @@ class ObserveService:
                 self._clean_reader = False  # 哨兵，避免反复尝试
         return reader if reader is not False else None
 
+    # ================================================================
+    # ⑤ OCR ROI 裁剪 + 调试图
+    # ================================================================
+
+    def _ocr_roi_crop(self, frame, top_ratio=None, bottom_px=None):
+        """⑤ OCR ROI 裁剪：按配置裁掉微信窗口标题栏(顶)与输入框(底)，
+        缩小喂给 RapidOCR 的图像，减少噪声(×/□按钮、输入框占位符)并提速。
+        坐标基于全窗比例，跨分辨率自适配；裁剪失败回退原帧。"""
+        cfg = (self.config.get("ocr_roi") or {}) if isinstance(self.config, dict) else {}
+        if not cfg.get("enabled", True):
+            return frame
+        try:
+            h, w = frame.shape[:2]
+            if top_ratio is None:
+                top_ratio = float(cfg.get("top_ratio", 0.045))
+            if bottom_px is None:
+                bottom_px = int(cfg.get("bottom_px", 60))
+            y0 = max(0, int(h * top_ratio))
+            y1 = max(y0 + 1, h - max(0, bottom_px))
+            return frame[y0:y1, :]
+        except Exception:
+            return frame
+
+    def _save_roi_debug(self, frame, roi) -> None:
+        """⑤ 存调试图：original.png(整窗) / roi.png(裁剪后) / overlay.png(整窗+红框)。
+        供核对裁剪是否裁错（尤其顶部是否误伤联系人名）。"""
+        cfg = (self.config.get("ocr_roi") or {}) if isinstance(self.config, dict) else {}
+        if not cfg.get("save_debug", True):
+            return
+        try:
+            import cv2
+            from pathlib import Path
+            h, w = frame.shape[:2]
+            top_ratio = float(cfg.get("top_ratio", 0.045))
+            bottom_px = int(cfg.get("bottom_px", 60))
+            y0 = max(0, int(h * top_ratio))
+            y1 = max(y0 + 1, h - max(0, bottom_px))
+            base = Path(__file__).resolve().parents[2] / "logs" / "roi_debug"
+            base.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(base / "original.png"), frame)
+            cv2.imwrite(str(base / "roi.png"), roi)
+            ov = frame.copy()
+            cv2.rectangle(ov, (0, y0), (w - 1, y1), (0, 0, 255), 3)
+            cv2.imwrite(str(base / "overlay.png"), ov)
+        except Exception:
+            pass
+
+    # ================================================================
+    # ⑥ 冷启动预热
+    # ================================================================
+
+    def _prewarm_text_model(self) -> None:
+        """⑥ 冷启动预热：发一条最小 dummy 请求，提前完成 DNS+TLS 握手与服务端
+        首次推理冷启动，使首个真实回复不再承担建连/预热延迟。失败不影响主流程，
+        且不打印任何 api_key。"""
+        tm = getattr(self, "text_model", None)
+        if tm is None:
+            return
+        tm_cfg = (self.config.get("text_model") or {}) if isinstance(self.config, dict) else {}
+        if not (tm_cfg.get("base_url") and tm_cfg.get("model")):
+            return
+        store = getattr(self, "store", None)
+        if store is not None:
+            store.append_log("[prewarm] 文本模型冷启动预热开始")
+        try:
+            _old_to = tm.timeout_seconds
+            _old_max = tm.max_tokens
+            tm.timeout_seconds = 8          # 预热失败最多阻塞 8s，不影响启动
+            tm.max_tokens = 1               # 极小回复，控制预热成本
+            _t0 = time.time()
+            res = tm.complete("你是预热用的静默助手，只回复一个字。", "ping")
+            _dt = int((time.time() - _t0) * 1000)
+            ok = bool(getattr(res, "success", False))
+            if store is not None:
+                store.append_log(f"[prewarm] 文本模型预热完成 latency={_dt}ms ok={ok}")
+        except Exception as e:
+            if store is not None:
+                store.append_log(f"[prewarm] 文本模型预热异常(已忽略) err={e}")
+        finally:
+            try:
+                tm.timeout_seconds = _old_to
+                tm.max_tokens = _old_max
+            except Exception:
+                pass
+
+
     def _analyze_with_local_ocr(self, image_path: str) -> dict:
         """本地 OCR 分析：截图 → RapidOCR → 布局解析 → 原版 schema。
 
@@ -1268,11 +1356,21 @@ class ObserveService:
             self.store.append_log("local_ocr_read_failed reason=image_none")
             return {}
 
+        # ⑤ OCR ROI 裁剪：按配置裁掉标题栏(顶)与输入框(底)，缩小喂给 RapidOCR 的
+        # 图像，减少噪声并提速；同步存 original/roi/overlay 三张调试图到 logs/roi_debug/。
+        roi_frame = self._ocr_roi_crop(frame)
+        self._save_roi_debug(frame, roi_frame)
+
+        # 顶部被裁掉时，通知 reader 关闭「顶部 4.5% 标题栏过滤」，
+        # 避免把帧顶的联系人名误判为窗口标题栏而丢弃（reader.analyze 的 roi_cropped 标志）。
+        _roi_cfg = (self.config.get("ocr_roi") or {}) if isinstance(self.config, dict) else {}
+        _top_cropped = bool(_roi_cfg.get("enabled", True)) and float(_roi_cfg.get("top_ratio", 0.0)) > 0
+
         # ---- 主路径：干净版 reader ----
         try:
             reader = self._ensure_clean_reader()
             if reader is not None:
-                analysis = reader.analyze(frame)
+                analysis = reader.analyze(roi_frame, roi_cropped=_top_cropped)
                 if analysis is not None:
                     is_conversation = getattr(analysis, "view", "") == "conversation"
                     has_messages = bool(getattr(analysis, "messages", None))
@@ -1295,8 +1393,8 @@ class ObserveService:
         if not self._ensure_local_ocr() or self._local_layout is None:
             return {}
         try:
-            lines = self._local_ocr.get_text_lines(frame)
-            result = self._local_layout.analyze_chat_screen(frame, ocr_lines=lines)
+            lines = self._local_ocr.get_text_lines(roi_frame)
+            result = self._local_layout.analyze_chat_screen(roi_frame, ocr_lines=lines)
             lm = result.get("latest_message", {}) or {}
             self.store.append_log(
                 f"local_ocr_analyze contact={result.get('current_contact', '')!r} "
@@ -1673,6 +1771,16 @@ class ObserveService:
                 except Exception as e:
                     self.store.append_log(f"text_model_refine_failed err={e}")
 
+            # 修复#1：停止后 LLM 迟到结果直接丢弃，不再写聊天历史/发送/恢复窗口。
+            # 用户在 analyze_once 执行期间（阻塞于 refine_reply 的同步 LLM 调用）点停止时，
+            # 这是迟到结果的第一拦截点，必须立即收尾，避免「已停止还动微信/写历史」。
+            if self._stop_requested:
+                _sc = analysis.get("current_contact", "") if isinstance(analysis, dict) else ""
+                self._append_runtime_log(
+                    f"text_model_returned_after_stop contact={_sc!r} skipped")
+                report["error"] = "assistant_stop_requested_before_send"
+                return report
+
             # 对齐原版：FallbackReply 策略链
             # 1. relax — 尝试放松 handoff/no_reply 决策，允许非黑名单客户继续
             analysis = self.reply_fallback.relax(analysis)
@@ -2047,8 +2155,6 @@ class ObserveService:
                 open_delay = float(self.config.get("wechat", {}).get(
                     "open_unread_delay_seconds", 0.5))
                 time.sleep(max(0.1, open_delay))
-                self._trace(f"[step] 已点击未读(entered={unread.get('entered_conversation')})，"
-                            f"等待 {open_delay}s 让微信切换到会话视图")
                 # 点击后重新检测窗口（对齐原版）
                 self.detect_wechat()
                 report = None
@@ -2200,6 +2306,31 @@ class ObserveService:
                         result["idle"] = False
                         self._persist(result)
                         return result
+
+                # —— 定时任务：自动回复时段门控（P1）。时段外不回复，静默跳过 ——
+                _sched = (self.config or {}).get("schedule") or {}
+                if _sched.get("enabled"):
+                    try:
+                        from datetime import datetime as _dt
+                        _now = _dt.now().strftime("%H:%M")
+                        _s = str(_sched.get("start") or "09:00")
+                        _e = str(_sched.get("end") or "22:00")
+                        if _s <= _e:
+                            _in = _s <= _now <= _e
+                        else:  # 跨零点（如 22:00-08:00）
+                            _in = _now >= _s or _now <= _e
+                        if not _in:
+                            _reason = f"非自动回复时段（{_s}-{_e}，当前 {_now}），已跳过"
+                            self._trace(f"[schedule] {_reason}")
+                            if rec is not None:
+                                self.pipeline.finish(rec, STATUS_MANUAL, reason=_reason)
+                            step("schedule_gate", "skipped", _reason)
+                            result["contact"] = analysis.get("current_contact", "")
+                            result["idle"] = False
+                            self._persist(result)
+                            return result
+                    except Exception as _se:  # noqa: BLE001
+                        self._trace(f"[schedule] gate error(忽略): {_se}")
 
             # 9. 发送前检查
             if report.get("auto_send_blocked"):

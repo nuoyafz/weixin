@@ -26,11 +26,22 @@ build8/
 installer_output/
 _build_tmp/
 
+# --- 在线更新发布产物（version.json + 增量包 + 整包，体积大，自行生成不上传） ---
+update_dist/
+
+# --- 运行时存储数据（ObservedService 等生成，非源码） ---
+src/storage/data/
+
 # --- PyInstaller 运行时符号链接（指向本地 _internal，不可移植） ---
 _internal
 
 # --- 真实密钥配置：必须忽略，改用 config.example.yaml 模板 ---
 config.yaml
+
+# --- 本地密钥文件（含真实 API Key，禁止入库；模板 .env.example 可入库） ---
+.env
+*.env
+!.env.example
 
 # --- 运行数据 / 日志 / 隐私（含 agent.db、聊天记录、线索、截图等） ---
 logs/
