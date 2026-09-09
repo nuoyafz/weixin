@@ -361,6 +361,27 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     # 版本号唯一真相源：始终以 src/__init__.py 的 __version__ 为准，
     # 忽略 config.yaml 的 app.version（避免显示过时版本）。
     settings.app_version = "v" + _pkg_version()
+
+    # 旧配置兼容：timeout 过小会误杀正常慢调用（实测阿里云 LLM 单轮 17~38s）。
+    # 增量更新不会覆盖用户 config，1.6.11 及更早的机器可能仍停在 20s（会大量超时失败）。
+    # 这里只在内存里抬到 45s，不回写用户文件（避免破坏注释与用户自定义值）。
+    for _name, _cfg in (("text_model", settings.text_model),
+                        ("vision_model", settings.vision_model)):
+        try:
+            _t = float(getattr(_cfg, "timeout_seconds", 0) or 0)
+        except Exception:
+            continue
+        if 0 < _t < 30:
+            _cfg.timeout_seconds = 45
+            _msg = (f"[config] {_name}.timeout_seconds={_t:g}s 过小(<30s)会误杀慢调用，"
+                    f"已按 45s 生效（想固定请在 config.yaml 改该值）")
+            print(_msg)
+            try:
+                from src.common.local_logger import LocalLogger
+                LocalLogger.append_log(_msg)
+            except Exception:
+                pass
+
     return settings
 
 

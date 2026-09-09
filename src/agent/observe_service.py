@@ -1277,7 +1277,9 @@ class ObserveService:
         """⑤ 存调试图：original.png(整窗) / roi.png(裁剪后) / overlay.png(整窗+红框)。
         供核对裁剪是否裁错（尤其顶部是否误伤联系人名）。"""
         cfg = (self.config.get("ocr_roi") or {}) if isinstance(self.config, dict) else {}
-        if not cfg.get("save_debug", True):
+        # 默认关闭：调试图每轮 3 张(~1.3MB)，真机长时间运行会堆积。
+        # 需要核对裁剪效果时，在 config.yaml 的 ocr_roi 段显式设 save_debug: true。
+        if not cfg.get("save_debug", False):
             return
         try:
             import cv2
@@ -3852,14 +3854,17 @@ class ObserveService:
     def _no_reply_cfg(self) -> tuple:
         """读取熔断阈值与冷却时长（可在 config.yaml 的 wechat 段调整）。"""
         wc = self.config.get("wechat", {}) if isinstance(self.config, dict) else {}
+        # 默认值与当前发布配置保持一致（2 / 120s）：
+        # 增量更新不会覆盖用户 config，旧版 config 缺这两个键时也必须拿到收紧后的值，
+        # 否则「对同一会话反复 OCR+LLM 空转」的修复在老机器上不生效。
         try:
-            threshold = int(wc.get("no_reply_skip_threshold", 3))
+            threshold = int(wc.get("no_reply_skip_threshold", 2))
         except Exception:
-            threshold = 3
+            threshold = 2
         try:
-            cooldown = float(wc.get("no_reply_skip_cooldown_seconds", 900))
+            cooldown = float(wc.get("no_reply_skip_cooldown_seconds", 120))
         except Exception:
-            cooldown = 900.0
+            cooldown = 120.0
         return max(2, threshold), max(60.0, cooldown)
 
     def _note_no_reply(self, contact: str) -> None:
