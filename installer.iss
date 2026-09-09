@@ -5,7 +5,7 @@
 ; ============================================================
 
 #define MyAppName "VisReply"
-#define MyAppVersion "1.6.11"
+#define MyAppVersion "1.6.12"
 #define MyAppPublisher "漩涡鸣人"
 #define MyAppExeName "WeChatAIAssistant.exe"
 
@@ -49,9 +49,16 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 ;   仅在首次安装写入默认配置，之后永远保留用户那份(含 api_key)。
 Source: "dist_onedir8\WeChatAIAssistant\*"; DestDir: "{app}"; \
     Excludes: "config.yaml"; Flags: ignoreversion recursesubdirs createallsubdirs
-; 仅首次安装写入默认 config.yaml；已存在则保留用户配置（含 api_key）
-Source: "dist_onedir8\WeChatAIAssistant\config.yaml"; DestDir: "{app}"; \
+; 【2026-09-09 修复路径】PyInstaller 6.22 把所有 datas 收进 _internal/ 子目录，
+;   根目录并没有 config.yaml（旧脚本按根路径引用 → ISCC 报 Source file does not exist）。
+;   真实路径是 _internal\config.yaml，仅首次安装写入；已存在则保留用户配置（含 api_key）。
+Source: "dist_onedir8\WeChatAIAssistant\_internal\config.yaml"; DestDir: "{app}\_internal"; \
     Flags: onlyifdoesntexist
+; 上面 Excludes: "config.yaml" 会按文件名匹配到所有层级，连带排掉
+;   _internal\rapidocr_onnxruntime\config.yaml（rapidocr 初始化必需，缺了 OCR 直接崩），
+;   这里显式补回，且允许覆盖（它是依赖自带配置，不含用户数据）。
+Source: "dist_onedir8\WeChatAIAssistant\_internal\rapidocr_onnxruntime\config.yaml"; DestDir: "{app}\_internal\rapidocr_onnxruntime"; \
+    Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

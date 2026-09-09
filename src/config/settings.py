@@ -26,12 +26,8 @@ _ENV_INLINE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _DEFAULT_SECRET_KEYS = ("VISREPLY_API_KEY", "ALIYUN_API_KEY")
 
 
-def _load_dotenv(path: Optional[Path] = None) -> None:
-    """加载项目根 .env（简易 loader，零第三方依赖）。
-
-    已存在的系统环境变量优先，不被 .env 覆盖。
-    """
-    p = Path(path) if path else (_PROJECT_ROOT / ".env")
+def _read_env_file(p: Path) -> None:
+    """读单个 .env 文件写入 os.environ（已存在的环境变量优先，不被覆盖）。"""
     try:
         if not p.exists():
             return
@@ -46,6 +42,45 @@ def _load_dotenv(path: Optional[Path] = None) -> None:
                 os.environ[k] = v
     except Exception:
         pass
+
+
+def _dotenv_candidates(path: Optional[Path] = None) -> list:
+    """返回 .env 的候选路径（按优先级）。
+
+    源码模式：项目根/.env。
+    打包模式：_PROJECT_ROOT 会解析到 <安装目录>/_internal，用户把 .env 放在
+    安装根目录（与 exe 同级）更自然，因此同时覆盖 exe 目录与 cwd。
+    """
+    if path:
+        return [Path(path)]
+
+    out = [_PROJECT_ROOT / ".env"]
+    try:
+        import sys
+        exe_dir = Path(sys.executable).resolve().parent
+        out.append(exe_dir / ".env")
+        out.append(exe_dir / "_internal" / ".env")
+    except Exception:
+        pass
+    out.append(Path.cwd() / ".env")
+
+    # 去重且保序
+    seen, uniq = set(), []
+    for p in out:
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(p)
+    return uniq
+
+
+def _load_dotenv(path: Optional[Path] = None) -> None:
+    """加载 .env（简易 loader，零第三方依赖）。
+
+    按候选路径顺序加载；已存在的系统环境变量优先，不被 .env 覆盖。
+    """
+    for p in _dotenv_candidates(path):
+        _read_env_file(p)
 
 
 def _expand_env_value(value: Any) -> Any:
