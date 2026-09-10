@@ -5,7 +5,7 @@
 ; ============================================================
 
 #define MyAppName "VisReply"
-#define MyAppVersion "1.6.12"
+#define MyAppVersion "1.6.13"
 #define MyAppPublisher "漩涡鸣人"
 #define MyAppExeName "WeChatAIAssistant.exe"
 
