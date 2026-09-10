@@ -124,6 +124,25 @@ class ObserveService:
         self.store = FileStore()
         self.store.append_log("logger", "ObserveService initialized")
 
+        # 已回复消息去重（2026-09-10 修复 #2）：避免点击链路失效后每轮对同一
+        # 消息反复烧 LLM。仅记录「已成功发送」的指纹，持久化到磁盘重启不重烧。
+        try:
+            from .reply_dedup import RepliedDedup
+
+            _dd_ttl = int(
+                (self.config.get("agent") or {}).get(
+                    "reply_dedup_ttl_seconds", 21600)
+            )
+            _dd_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "data", "replied_dedup.json")
+            self._reply_dedup = RepliedDedup(_dd_path, ttl=_dd_ttl)
+            self.store.append_log(
+                f"reply_dedup_init ok path={_dd_path} ttl={_dd_ttl}s")
+        except Exception as e:  # noqa: BLE001
+            self._reply_dedup = None
+            self.store.append_log(f"reply_dedup_init_failed err={e}")
+
         # 窗口管理器
         self.window_manager = WeChatWindowManager(
             self.store, self.config.get("wechat", {}).get("window_title_keywords", ["微信"])
@@ -1677,6 +1696,33 @@ class ObserveService:
         contact = analysis.get("current_contact", "unknown")
         self.current_contact = contact
 
+        # === 已回复消息去重（2026-09-10 修复 #2）===
+        # 点击链路失效时会每轮重读同一会话，对同一消息反复烧 LLM。
+        # 仅当之前已成功发送过该(联系人,最新消息)的回复才跳过；被拦截/
+        # 发送失败的不入去重集，下一轮可正常重试。
+        _dd_contact = contact
+        _dd_msg = (analysis.get("latest_message") or {}).get("content", "") or ""
+        if (self._reply_dedup is not None
+                and _dd_contact not in ("", "unknown")
+                and _dd_msg
+                and self._reply_dedup.should_skip(_dd_contact, _dd_msg)):
+            self._trace(
+                f"[reply_dedup] 命中已回复去重 contact={_dd_contact!r}，"
+                f"跳过本轮 LLM/发送")
+            self.store.append_log(f"reply_dedup_skip contact={_dd_contact!r}")
+            _rec = getattr(self, "_current_record", None)
+            if _rec is not None:
+                try:
+                    self.pipeline.finish(
+                        _rec, STATUS_SKIPPED,
+                        reason="reply_dedup_already_replied")
+                except Exception:  # noqa: BLE001
+                    pass
+            report["reply_draft"] = ""
+            report["auto_send_blocked"] = True
+            report["auto_send_block_reason"] = "该消息已回复过（去重）"
+            return report
+
         reply = ""
         source_label = ""
 
@@ -1891,7 +1937,7 @@ class ObserveService:
             self.last_report = self.analyze_once()
 
         report = self.last_report
-        send_result = self.sender.send_report(report)
+        send_result = self._send_and_record(report)
 
         self.store.save_report(report, send_result)
 
@@ -2080,7 +2126,7 @@ class ObserveService:
 
             if pending_report and not wait_reason and not self._stop_requested:
                 step("send_retry", "running", "后台补发")
-                send_result = self.sender.send_report(pending_report)
+                send_result = self._send_and_record(pending_report)
                 self._pending_send_report = None
                 self._pending_send_next_retry_at = 0.0
 
@@ -2397,6 +2443,22 @@ class ObserveService:
                 contact=str(analysis.get("current_contact") or ""))
 
             # 10. 发送
+            # auto_send_blocked（含已回复去重命中）：直接跳过整个发送段，
+            # 不调用真实发送、不进入失败重试逻辑。
+            if isinstance(report, dict) and report.get("auto_send_blocked"):
+                self._trace(
+                    f"[send] 跳过发送：{report.get('auto_send_block_reason', 'auto_send_blocked')}")
+                step("send", "skipped",
+                     report.get("auto_send_block_reason", "auto_send_blocked"))
+                result["report"] = report
+                result["contact"] = (
+                    analysis.get("current_contact", "")
+                    if isinstance(analysis, dict) else "")
+                result["send_result"] = {
+                    "ok": False, "skipped": True, "reason": "auto_send_blocked"}
+                self._persist(result)
+                return result
+
             t6 = time.perf_counter()
             self._trace(f"[send] 准备发送 contact={analysis.get('current_contact','')!r} "
                         f"reply={reply_draft[:60]!r}")
@@ -2407,7 +2469,7 @@ class ObserveService:
                 contact=str(analysis.get("current_contact") or ""))
             # 注入分析时刻基准帧，供发送前客户话轮校验做视觉差分双信号
             report["_send_baseline_image"] = getattr(self, "_last_analyzed_image", None)
-            send_result = self.sender.send_report(report)
+            send_result = self._send_and_record(report)
             debug_timing["send_ms"] = int((time.perf_counter() - t6) * 1000)
 
             reply_signature = self._reply_turn_signature(
@@ -2790,6 +2852,37 @@ class ObserveService:
     def _reply_turn_text_for_signature(self, analysis: dict[str, Any],
                                        latest: dict[str, Any]) -> str:
         return str(latest.get("customer_turn_text", latest.get("content", "")))
+
+    def _record_replied(self, report: Any) -> None:
+        """把「已成功发送」的(联系人,最新消息)指纹写入去重集（2026-09-10 修复 #2）。"""
+        if self._reply_dedup is None or not isinstance(report, dict):
+            return
+        try:
+            _a = report.get("analysis", {}) or {}
+            if not isinstance(_a, dict):
+                _a = {}
+            _c = _a.get("current_contact", "") or ""
+            _m = (_a.get("latest_message") or {}).get("content", "") or ""
+            if _c and _m:
+                self._reply_dedup.mark_replied(_c, _m)
+                self._reply_dedup.save()
+        except Exception as e:  # noqa: BLE001
+            self.store.append_log(f"reply_dedup_record_err={e}")
+
+    def _send_and_record(self, report: Any) -> Any:
+        """发送回复；若被 auto_send_blocked 拦截则跳过真实发送，成功后记录去重指纹。
+
+        统一替换分散的 self.sender.send_report(...) 调用，使去重记录只在一处落地。
+        """
+        if isinstance(report, dict) and report.get("auto_send_blocked"):
+            self.store.append_log(
+                "send_skipped reason=auto_send_blocked "
+                f"detail={report.get('auto_send_block_reason', '')}")
+            return {"ok": False, "skipped": True, "reason": "auto_send_blocked"}
+        send_result = self.sender.send_report(report)
+        if isinstance(send_result, dict) and send_result.get("ok"):
+            self._record_replied(report)
+        return send_result
 
     def _reply_turn_signature(self, contact: str, reply_text: str) -> str:
         contact = self._normalize_signature_text(contact)
