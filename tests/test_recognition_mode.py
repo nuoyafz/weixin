@@ -85,12 +85,15 @@ def run_pin_scenario(verify_return, nav_count=3, contacts_after_pin=None,
                  "kind": "contact_dot"})
         )
     )
-    det._click_top_conversation_row = lambda hw, w, h, wm, nav_num=None, img=None: {
-        "found": True, "clicked": True, "kind": "contact_dot", "contact": "",
-        "entered_conversation": entered_after_click, "click_method": "top_row_coordinate",
-        "reason": "clicked top row", "unread_count": nav_num,
-        "click_y": int(h * 0.105),
-    }
+    det._click_top_conversation_row = (
+        lambda hw, w, h, wm, nav_num=None, img=None, top_only=False: {
+            "found": True, "clicked": True, "kind": "contact_dot", "contact": "",
+            "entered_conversation": entered_after_click,
+            "click_method": "top_row_coordinate",
+            "reason": "clicked top row", "unread_count": nav_num,
+            "click_y": int(h * 0.105),
+        }
+    )
     det._dot_clickable = lambda d: True
     det._ensure_chat_list = lambda *a, **k: True
     # 校验结果由调用方注入

@@ -295,39 +295,190 @@ class RedDotDetector:
             self._failed_contact_y_frames.pop(y, None)
 
 
-    def _top_row_has_reddot(self, img, w, h) -> bool:
-        """双击置顶后，判断列表首个会话行（顶行）是否带未读红点。
+    def _avatar_column_x(self, img: "np.ndarray", w: int, h: int, from_y: int):
+        """自适应定位会话列表「头像列」的 x 范围，返回 (x_start, x_end)。
 
-        用于「点顶行进会话」前的短路：顶行无红点说明置顶没把未读顶上来 /
-        顶行并非未读，直接点进去会空跑一轮（进会话+验证约 20~60s 浪费），
-        应跳过点击、立即重双击置顶取下一个未读。
+        跨分辨率/主题自校准，不写死坐标比例（历史雷区：写死比例跨机必崩）：
+        统计 x∈[0.07W, 0.25W] 每列的「非背景像素占比」（y 取 from_y~0.9H）：
+          头像方块        占比 ≈ 行高里的一半（真机 1468x1216 实测 0.38~0.51）
+          昵称/消息文字列  只有细笔画（实测 0.20~0.28）
+          左侧导航栏图标   x<0.07W，被起点排除
+        取占比 ≥0.32 的连续列段（允许 <0.01W 的小缺口，头像内部的浅色区域
+        会把带切碎），多段候选取「平均密度最高」的一段，宽度须在
+        0.02W~0.06W 之间（真机实测头像列 x=139~201，宽 0.042W）。
+        返回 None 表示无法判定（空列表/主题差异），调用方回退比例窗口。
+        """
+        try:
+            import cv2
+            x0 = int(w * 0.07)
+            x1 = min(int(img.shape[1]), int(w * 0.25))
+            y0 = max(0, int(from_y))
+            y1 = int(h * 0.90)
+            if x1 <= x0 or y1 <= y0:
+                return None
+            roi = img[y0:y1, x0:x1]
+            if roi.size == 0:
+                return None
+            g = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            s = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)[:, :, 1]
+            col = ((g < 210) | (s > 50)).mean(axis=0)
+            thr = 0.32
+            gap_tol = max(1, int(w * 0.007))
+            runs: List[tuple] = []
+            start, gap = None, 0
+            for i, v in enumerate(col):
+                if v >= thr:
+                    if start is None:
+                        start = i
+                    gap = 0
+                elif start is not None:
+                    gap += 1
+                    if gap > gap_tol:
+                        runs.append((start, i - gap))
+                        start = None
+            if start is not None:
+                runs.append((start, len(col) - 1))
+            wmin, wmax = max(6, int(w * 0.020)), max(12, int(w * 0.060))
+            cands = [(x0 + a, x0 + b) for a, b in runs
+                     if wmin <= (b - a) <= wmax]
+            if not cands:
+                return None
+            # 多候选取平均密度最高（头像是整块实心，密度显著高于图标/文字）
+            best = max(
+                cands,
+                key=lambda c: float(col[c[0] - x0:c[1] - x0].mean()))
+            return best
+        except Exception:
+            return None
 
-        安全约束（避免重蹈「判空短路漏掉真实未读」覆辙）：仅当列表**确有**
-        红点、但**都不在顶行**时才判定「顶行无红点 → 跳过点」；若 T1 漏检
-        （无红点）或顶行定位失败，一律保守返回 True（照常点击），不引入新跳过。
+    def _row_pitch(self, img: "np.ndarray", w: int, h: int, sb: int) -> int:
+        """估算会话列表行高（像素）：相邻头像带起点间距的中位数。
+
+        跨分辨率/DPI 自校准；头像带不足 2 条（空列表/头像带被切碎）时回退
+        0.075H。真机 1468x1216 实测 ~95px(0.078H)；结果夹在 0.05H~0.11H，
+        避免碎带把"第一行窗口"撑到第二行。
+        """
+        try:
+            bands = self._avatar_bands(img, w, h, sb + 2, limit=6)
+            starts = [b[0] for b in bands
+                      if (b[1] - b[0]) >= int(h * 0.03)]
+            if len(starts) >= 2:
+                diffs = sorted(b - a for a, b in zip(starts, starts[1:]))
+                p = int(diffs[len(diffs) // 2])
+                lo, hi = int(h * 0.05), int(h * 0.11)
+                if p > 0:
+                    return max(lo, min(hi, p))
+        except Exception:
+            pass
+        return int(h * 0.075)
+
+    def _top_row_badge_state(self, img, w, h) -> tuple:
+        """双击置顶后，判定**列表第一行**（置顶上来的那行）是否带未读徽章。
+
+        返回 (state, top_y)：
+          "unread"  第一行确有红/紫徽章 → 点这一行进会话；
+          "clean"   第一行无徽章、而下方仍扫得到红点 → 置顶没把未读顶上来 /
+                    第一行本身不是未读 → 不点，立即重双击置顶取下一个未读；
+          "unknown" 搜索框/第一行定位失败，或全列表都扫不到红点（整体漏检）→
+                    无法下结论，由调用方保守处理（照常点第一行）。
+
+        —— 为什么判定范围必须收在「第一行」内（2026-09-10 真机 12:29 日志）——
+        双击后 `_click_top_conversation_row` 已算出第一行 y=130，随后却被
+        「全列表扫未读行」覆盖成 y=783 的『代取快递外卖』，OCR 读行名又误判，
+        最终点错行。全列表红点扫描的准确率不足以支撑点击决策 → 只看第一行：
+        未读就进，不是未读就继续双击置顶。
+
+        几何全部自校准（真机 1468x1216 实测标定）：
+          · 第一行中心 = 搜索框底边下方第一个头像带中心（实测 sb=121 → 196）；
+            首带贴近搜索框（<0.035H，多为搜索框下沿/滚动动画碎带）时改用
+            「搜索框下方一整行」兜底窗口；
+          · 窗口高度 = 行高的一半（行高由头像带间距估出，真机实测 95px）；
+          · 徽章列 = 头像列右缘 ±（徽章压在头像右上角，实测 cx≈0.13W）。
         """
         if img is None:
-            return True
+            return "unknown", None
         try:
-            cds = self._scan_contact_dots(img)
+            sb = self._detect_search_box_bottom(img, w, h)
+            if sb is None:
+                return "unknown", None
+            ih, iw = img.shape[:2]
+            y_top_lim = max(0, int(sb) + 2)
+            pitch = self._row_pitch(img, w, h, sb)
+            half = max(int(h * 0.035), int(pitch * 0.5))
+            row_c = self._first_avatar_below(img, w, h, sb + 2)
+            if row_c is None or (row_c - y_top_lim) < int(h * 0.035):
+                # 首带不可信（空列表/搜索框下沿/动画碎带）→ 用整行兜底窗口
+                y0 = y_top_lim
+                y1 = min(ih, y_top_lim + 2 * half)
+                top_y = (y0 + y1) // 2
+            else:
+                y0 = max(y_top_lim, row_c - half)
+                y1 = min(ih, row_c + half)
+                top_y = row_c
+            av = self._avatar_column_x(img, w, h, sb + 2)
+            if av is not None:
+                # 徽章压在头像右上角：左界留 0.035W 余量（实测有徽章起始 x=160
+                # =0.109W，头像列右缘 0.135W），避免半个徽章被窗口切掉后
+                # 因宽度不足被 _find_dots 的形状校验丢弃（真机 0909 帧实测）。
+                bx0 = max(0, av[1] - int(w * 0.035))
+                bx1 = min(iw, av[1] + int(w * 0.045))
+            else:
+                bx0, bx1 = int(w * 0.115), min(iw, int(w * 0.17))
+            if y1 > y0 and bx1 > bx0:
+                band = img[y0:y1, bx0:bx1]
+                if band.size and self._band_has_badge(band):
+                    return "unread", top_y
+            # 第一行窗口以外（下方）仍扫得到红点 → 第一行确实不是未读
+            ly0 = min(ih, y1 + 2)
+            ly1 = int(ih * 0.90)
+            lx0 = max(0, int(w * 0.06))
+            lx1 = min(iw, int(w * 0.30))
+            if ly1 > ly0 and lx1 > lx0:
+                low = img[ly0:ly1, lx0:lx1]
+                if low.size and self._find_dots(low, max_size=48):
+                    return "clean", top_y
+            return "unknown", top_y
         except Exception:
-            return True
-        if not cds:
-            return True  # T1 漏检：无法确认顶行无红点 → 保守点击
-        sb = self._detect_search_box_bottom(img, w, h)
-        if sb is None:
-            return True  # 搜索框检不出 → 无法定位顶行 → 保守点击
-        top_y = self._first_avatar_below(img, w, h, sb + 2)
-        if top_y is None:
-            return True
-        tol = int(h * 0.06)
-        for c in cds:
-            cy = c.get("center_y")
-            if cy is None:
-                continue
-            if abs(cy - top_y) <= tol:
+            return "unknown", None
+
+    def _band_has_badge(self, band: np.ndarray, min_area: int = 40) -> bool:
+        """判定给定小区域内是否有未读徽章（红/紫实心块），只回答"有没有"。
+
+        先走 `_find_dots`（HSV+RGB 双通道 + 尺寸/比例/实心度校验，最准）；
+        未命中时用纯颜色分割兜底 —— 抗锯齿把徽章碎成细长条时 `_find_dots`
+        的形状校验会全部落空，但像素仍在（与 `_nav_badge_metric` 同一兜底思路）。
+        """
+        try:
+            dots = self._find_dots(band, max_size=48)
+            if any(d.kind in ("red", "purple") for d in dots):
                 return True
-        # 列表里确有红点，但都不在顶行 → 顶行非未读 → 置顶未把未读顶上来
+        except Exception:
+            pass
+        try:
+            import cv2
+            nr = band[:, :, 2].astype(np.int16)
+            ng = band[:, :, 1].astype(np.int16)
+            nb = band[:, :, 0].astype(np.int16)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ratio = nr.astype(np.float64) / ((ng + nb).astype(np.float64))
+                red_mask = (
+                    (nr >= self._r_min) & (ng <= self._g_max) & (nb <= self._b_max)
+                    & ((nr - ng) >= self._rg_diff) & ((ng + nb) > 0)
+                    & (ratio > self._r_ratio)
+                )
+                purple_mask = (
+                    (nr >= 140) & (nb >= 140) & (ng <= self._g_max)
+                    & (np.abs(nr - nb) <= 80)
+                    & ((nr + nb) / 2.0 > ng + 30)
+                )
+            mask = (red_mask | purple_mask).astype(np.uint8)
+            num, _lbl, stats, _cents = cv2.connectedComponentsWithStats(
+                mask, connectivity=8)
+            for i in range(1, int(num)):
+                if int(stats[i, cv2.CC_STAT_AREA]) >= int(min_area):
+                    return True
+        except Exception:
+            pass
         return False
 
     def _pin_doubleclick_branch(self, window_handle, w, h, wm, nav_num, result):
@@ -413,17 +564,25 @@ class RedDotDetector:
             self._pin_unread_to_top(window_handle, w, h, wm)
 
             img2 = self._capture(window_handle)
-            # —— 预点击红点门限（用户要求：顶行无红点则跳过点击，立即重双击置顶）——
-            # 仅当「列表确有红点但都不在顶行」时跳过点（顶行非未读），T1 漏检/定位
-            # 失败则保守照常点击；跳过时不进入会话，立即进入下一次双击置顶重试。
-            if img2 is not None and not self._top_row_has_reddot(img2, w, h):
+            # —— 用户要求（2026-09-10）：双击置顶后**只看第一行**是否未读 ——
+            # 未读 → 点这一行进会话；不是未读 → 不点，立即再双击置顶取下一个。
+            # 绝不再由「全列表扫红点」决定点击目标（真机 12:29 日志：顶行 y=130
+            # 已算对，却被全列表未读行覆盖成 y=783 的错行）。
+            top_state, top_state_y = (None, None)
+            if img2 is not None:
+                top_state, top_state_y = self._top_row_badge_state(img2, w, h)
+            if top_state == "clean":
                 self._debug_log(
-                    "[PIN] 列表有红点但顶行无红点，跳过点击，"
-                    "立即重双击置顶取下一个未读")
+                    f"[PIN] 顶行(y={top_state_y})无未读徽章 → 不点击，"
+                    f"立即重双击置顶取下一个未读 "
+                    f"(第 {_pin_try + 1}/{MAX_PIN_RETRY} 次)")
                 _skipped_no_dot = True
                 continue
+            self._debug_log(
+                f"[PIN] 顶行未读判定={top_state} (y={top_state_y}) → 点第一行进会话")
             top = self._click_top_conversation_row(
-                window_handle, w, h, wm, nav_num=nav_num, img=img2)
+                window_handle, w, h, wm, nav_num=nav_num, img=img2,
+                top_only=True)
             if not top.get("clicked"):
                 if top.get("pin_not_effective"):
                     # 双击置顶未生效（T1无未读行+顶行非客户+nav>0）：
@@ -1922,23 +2081,30 @@ class RedDotDetector:
         except Exception:
             return None
 
-    def _first_avatar_below(self, img: "np.ndarray", w: int, h: int, from_y: int):
-        """从 from_y（应在搜索框底边下方）向下，在头像列找第一个会话头像带中心 y。
+    def _avatar_bands(self, img: "np.ndarray", w: int, h: int, from_y: int,
+                      limit: int = 3) -> List[tuple]:
+        """从头像列自适应定位会话头像带，返回 [(s_y, e_y), ...]。
 
-        头像列 x≈4%~10%W，头像带 = 「灰度偏暗 或 彩色饱和」的竖向连续像素段。
-        从搜索框底边开始扫，第一个命中的带即是列表第一行会话，返回其带中心 y；
-        找不到（如空列表）返回 None。
+        头像带 = 「灰度偏暗 或 彩色饱和」的竖向连续像素段。x 范围走
+        `_avatar_column_x` 自校准（真机实测头像列 x=139~201）；定位失败时
+        回退旧比例 [0.04W, 0.10W]，行为不变。
+        `_first_avatar_below` 只取第一带；判定「第一行是否带未读徽章」时
+        还需要行高（`_row_pitch` 由本方法的带间距得出）。
         """
         try:
             import cv2
-            ax0, ax1 = int(w * 0.04), int(w * 0.10)
+            ax = self._avatar_column_x(img, w, h, from_y)
+            if ax is not None:
+                ax0, ax1 = ax
+            else:
+                ax0, ax1 = int(w * 0.04), int(w * 0.10)
             ay0 = max(0, int(from_y))
             ay1 = int(h * 0.97)
             if ay1 <= ay0 or ax1 <= ax0:
-                return None
+                return []
             aroi = img[ay0:ay1, ax0:ax1]
             if aroi.size == 0:
-                return None
+                return []
             ag = cv2.cvtColor(aroi, cv2.COLOR_BGR2GRAY)
             ahsv = cv2.cvtColor(aroi, cv2.COLOR_BGR2HSV)
             amask = (ag < 210) | (ahsv[:, :, 1] > 50)
@@ -1946,21 +2112,31 @@ class RedDotDetector:
             row_count = amask.sum(axis=1).astype(int)
             thr = max(2, int(col_n * 0.08))
             in_b, s = False, 0
-            bands_found = []
+            bands: List[tuple] = []
             for i, c in enumerate(row_count):
                 if c > thr and not in_b:
                     in_b, s = True, i
                 elif c <= thr and in_b:
                     in_b = False
-                    bands_found.append((s, i))
+                    bands.append((ay0 + s, ay0 + i))
             if in_b:
-                bands_found.append((s, len(row_count)))
-            if not bands_found:
-                return None
-            s0, e0 = bands_found[0]
-            return ay0 + (s0 + e0) // 2
+                bands.append((ay0 + s, ay0 + len(row_count)))
+            return bands[:max(1, int(limit))]
         except Exception:
+            return []
+
+    def _first_avatar_below(self, img: "np.ndarray", w: int, h: int, from_y: int):
+        """从 from_y（应在搜索框底边下方）向下，在头像列找第一个会话头像带中心 y。
+
+        头像列 x≈4%~10%W，头像带 = 「灰度偏暗 或 彩色饱和」的竖向连续像素段。
+        从搜索框底边开始扫，第一个命中的带即是列表第一行会话，返回其带中心 y；
+        找不到（如空列表）返回 None。
+        """
+        bands = self._avatar_bands(img, w, h, from_y, limit=1)
+        if not bands:
             return None
+        s0, e0 = bands[0]
+        return (s0 + e0) // 2
 
     def _ocr_first_contact_row(self, img: "np.ndarray", w: int, h: int, sb):
         """双击置顶后，OCR 识别列表第一个联系人，返回 (name, click_x, click_y)。
@@ -2196,78 +2372,21 @@ class RedDotDetector:
             return True
         return False
 
-    def _find_unread_row(self, img: "np.ndarray", w: int, h: int, sb):
-        """置顶后在会话列表找「带未读徽章的行」，返回 (数字, click_x, click_y)。
-
-        背景：双击置顶后盲点第一行会踩坑 —— 第一行可能是『[图片]』等非联系人
-        预览或置顶项，点了空跑一轮（实测 13:49 日志：点了 [图片] 进了搜索空页）。
-        这里直接扫列表区的未读红点徽章：
-          1. _find_dots（纯像素，毫秒级）找列表区红点候选；
-          2. 每个候选用 _read_badge_number（T1 rec-only 增强通道）读数字：
-             读出数字 = 确认未读行；读不出按纯红点未读=1 处理（微信单条
-             未读就是无数字红点）；
-          3. 点最上面的未读行文字区（y=徽章所在行，x=行文字区，避开头像）。
-        没有红点返回 None，调用方回落原「OCR 第一行」逻辑。
-        """
-        if img is None:
-            return None
-        try:
-            import cv2  # noqa: F401
-            ih, iw = img.shape[:2]
-            x_start = max(0, int(w * LIST_X_START_RATIO))
-            x_end = min(iw, int(w * 0.32))
-            y_top = (int(sb) + 4) if sb is not None else max(0, int(h * 0.09))
-            y_bot = int(h * 0.90)
-            if x_end <= x_start or y_bot <= y_top:
-                return None
-            region = img[y_top:y_bot, x_start:x_end]
-            if region.size == 0:
-                return None
-            dots = self._find_dots(region)
-            if not dots:
-                return None
-            # 排除太靠左的（导航栏列 x < 0.08W 的图标徽章不会进这个裁剪区，
-            # 因为 x_start ≥ 0.10W；这里再按相对位置兜一道）
-            dots = [d for d in dots if (x_start + d.center_x) >= int(w * 0.12)]
-            if not dots:
-                return None
-            for d in sorted(dots, key=lambda dd: dd.center_y):
-                box = {"x": d.x, "y": d.y, "w": d.w, "h": d.h}
-                n = self._read_badge_number(region, box)
-                if n is None:
-                    # 数字读不出（常见于单条未读的纯红点）→ 面积/形状合理的
-                    # 红点按未读=1 处理；噪声块（细长/过小）跳过
-                    if d.area < 60 or d.w < 8 or d.h < 8:
-                        continue
-                    if max(d.w, d.h) > 3 * min(d.w, d.h):
-                        continue
-                    n = 1
-                cy = y_top + d.center_y
-                cx = int(w * 0.20)
-                # 行名黑名单校验：红点行可能是「公众号/文件传输助手」等系统账号
-                # （实测 unread_debug 帧的未读红点就在公众号行），点了空跑且
-                # 可能误入系统会话。OCR 该行名字区，命中内置项 → 跳过取下一行。
-                row_name = self._ocr_row_name_at(img, w, h, cy)
-                if row_name is not None and self._is_builtin_row_name(row_name):
-                    self._debug_log(
-                        f"未读行: 红点行命中内置项={row_name!r}，跳过")
-                    continue
-                self._debug_log(
-                    f"未读行: 列表未读徽章 数字={n} 名字={row_name!r} "
-                    f"红点位置=({x_start + d.center_x},{cy}) -> 点行 ({cx},{cy})")
-                return n, cx, int(cy)
-            return None
-        except Exception as exc:
-            self._debug_log(f"未读行: 扫描失败 {exc}")
-            return None
-
     def _click_top_conversation_row(self, hwnd: int, w: int, h: int, wm,
-                                    nav_num=None, img=None) -> Dict[str, Any]:
-        """置顶兜底：红点没扫到时直接按坐标点列表最顶会话行。
+                                    nav_num=None, img=None,
+                                    top_only: bool = False) -> Dict[str, Any]:
+        """置顶后点列表第一行（被置顶上来的那行）进入会话。
 
         双击置顶后未读会话必在第一行。点行内文字区（避开头像，防误开资料卡），
         进入会话后由 observe_service 的意图/黑名单判定决定是否回复，
         不会把群或无关人当客户发消息。
+
+        top_only=True（pin 分支专用）：点击目标只允许是列表第一行。
+        历史上这里有一条「未读行优先」分支 —— 在全列表扫红点、把点击点
+        覆盖成列表深处某一行（真机 2026-09-10 12:29：顶行 y=130 被覆盖成
+        y=783 的『代取快递外卖』，OCR 行名又误判 → 点错行）。全列表扫描的
+        准确率不足以支撑点击决策，已彻底移除；是否需要点第一行由调用方
+        `_top_row_badge_state` 事前判定（未读才点，不是未读就继续双击置顶）。
         """
         # 新思路（换掉旧的头像列检测）：先定位顶部稳定的灰色搜索框，找到其底边，
         # 再在底边下方检测第一个会话行/头像并点击——保证落在搜索框下方，不再误中。
@@ -2312,35 +2431,18 @@ class RedDotDetector:
         x = int(w * 0.20)
         click_src = "coordinate"
         ocr_name = ""
-        # —— 优先：未读行定位（T1 数字识别确认）——
-        # 双击置顶后第一行未必是未读（可能是 [图片] 预览/置顶项），盲点会空跑
-        # 一轮。先扫列表未读徽章行，点「带红点数字的那一行」。
-        if img is not None:
-            try:
-                unread_hit = self._find_unread_row(img, w, h, sb)
-            except Exception:
-                unread_hit = None
-            if unread_hit:
-                n, ux, uy = unread_hit
-                # 安全校验：同样必须严格在搜索框底边下方
-                if sb is None or uy > sb + 4:
-                    x, y = int(ux), int(uy)
-                    ocr_name = f"未读行(n={n})"
-                    click_src = "unread_row"
-                    self._debug_log(
-                        f"顶行:未读行优先 name={ocr_name!r} "
-                        f"click=({x},{y}) sb={sb}")
-                else:
-                    self._debug_log(
-                        f"顶行:未读行 ({ux},{uy}) 未越过搜索框底边 "
-                        f"sb={sb}，回落第一行逻辑")
+        # —— 已移除「未读行优先」全列表扫描（2026-09-10）——
+        # 旧逻辑在全列表扫未读徽章行并覆盖点击点，导致误点列表深处的行。
+        # 点击目标固定为「搜索框下方第一行」，是否值得点由调用方的
+        # `_top_row_badge_state` 事前判定。
+        del top_only  # 语义已内化（目标恒为第一行），保留入参便于调用方显式声明意图
         # —— 次优：OCR 识别第一行联系人，点它的文本框中心 ——
         # 坐标来自真实识别到的文本（天然落在第一行会话内），裁剪区从搜索框底边下方
         # 开始、"搜索"占位符进不了识别结果，从根上杜绝误点搜索框。OCR 不可用时
         # 自动回落到上面的坐标法（sb + 头像带），行为不变。
-        # 同时承担「双击置顶前置软信号」：T1 未找到未读行时先看顶行是不是非客户
-        # 项（草稿/系统号/预览），是则判定双击未生效→放弃盲点、交外层重试。
-        if click_src != "unread_row" and img is not None:
+        # 同时承担「双击置顶前置软信号」：先看顶行是不是非客户项
+        # （草稿/系统号/预览），是则判定双击未生效→放弃盲点、交外层重试。
+        if img is not None:
             try:
                 tgt = self._ocr_first_contact_row(img, w, h, sb)
             except Exception:
