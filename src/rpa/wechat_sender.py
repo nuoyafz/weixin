@@ -571,9 +571,37 @@ class WeChatSender:
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         return cleaned, image_refs
 
+    DEFAULT_MATERIAL_SUBDIR = ("data", "materials", "images")
+
+    @classmethod
+    def _default_material_dir(cls) -> str:
+        """UI 上传素材的默认目录，与 text_model_client 侧保持一致。
+
+        （src/rpa/wechat_sender.py 上溯三级即为项目根）
+        """
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        return os.path.join(root, *cls.DEFAULT_MATERIAL_SUBDIR)
+
+    def _material_dir(self) -> str:
+        """素材目录：优先 config.material_dir，回退 UI 默认目录。
+
+        全项目从未有人写过 config.material_dir，若不回退，
+        _image_ref 永远找不到素材——这是素材链路的关键断点之一。
+        """
+        cfg_dir = ""
+        try:
+            cfg_dir = ((self._config or {}).get("material_dir") or "").strip()
+        except Exception:
+            cfg_dir = ""
+        if cfg_dir and os.path.isdir(cfg_dir):
+            return cfg_dir
+        default = self._default_material_dir()
+        return default if os.path.isdir(default) else ""
+
     def _image_ref(self, name: str) -> Optional[str]:
         """Resolve an image name to its file path."""
-        material_dir = self._config.get("material_dir", "")
+        material_dir = self._material_dir()
         if material_dir and os.path.isdir(material_dir):
             for ext in ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'):
                 path = os.path.join(material_dir, name + ext)

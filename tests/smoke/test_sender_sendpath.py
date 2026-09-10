@@ -24,6 +24,7 @@ pytest.importorskip("numpy")
 
 from unittest import mock  # noqa: E402
 
+from src.ai.text_model_client import TextModelClient  # noqa: E402
 from src.rpa.wechat_sender import WeChatSender  # noqa: E402
 
 
@@ -187,3 +188,87 @@ def test_material_without_any_engine_returns_false(tmp_path):
     s._rpa = None
 
     assert s._send_material_once(1, str(p), "image") is False
+
+
+# ---------------------------------------------------------------
+# 素材链路接通：UI 上传 -> LLM 引用 -> sender 发图
+# ---------------------------------------------------------------
+def test_prompt_injects_material_when_present(tmp_path):
+    """有素材时，system prompt 必须告知素材名与 {image:} 用法。"""
+    (tmp_path / "报价单.png").write_bytes(b"x")
+    client = TextModelClient(config={"material_dir": str(tmp_path)})
+
+    hint = client._material_hint()
+    assert "报价单" in hint, f"未告知可用素材名: {hint!r}"
+    assert "{image:报价单}" in hint, f"未示范素材标记用法: {hint!r}"
+    assert client._material_stems() == ("报价单",), \
+        f"素材名应去扩展名，实际: {client._material_stems()}"
+
+
+def test_prompt_stays_silent_without_material(tmp_path):
+    """无素材时零注入——保证未使用素材功能的用户行为完全不变。"""
+    empty = tmp_path / "empty_dir"
+    empty.mkdir()
+    client = TextModelClient(config={"material_dir": str(empty)})
+
+    assert client._material_stems() == (), "无素材应返回空元组"
+    assert client._material_hint() == "", "无素材时不应注入任何提示"
+    assert "图片素材发送能力" not in client._system_prompt(), \
+        "无素材时 system prompt 不应出现素材段落"
+
+
+def test_prompt_refreshes_when_material_added(tmp_path):
+    """上传新素材后缓存必须失效，否则新素材永远不生效。"""
+    client = TextModelClient(config={"material_dir": str(tmp_path)})
+    assert "报价单" not in client._system_prompt(), "初始无素材不应出现该名"
+
+    (tmp_path / "报价单.png").write_bytes(b"x")
+    prompt = client._system_prompt()
+    assert "报价单" in prompt, "新增素材后 prompt 未刷新（缓存未失效）"
+
+
+def test_sender_falls_back_to_default_material_dir(tmp_path, monkeypatch):
+    """config 未配 material_dir 时必须回退到 UI 上传目录。"""
+    (tmp_path / "报价单.png").write_bytes(b"x")
+    monkeypatch.setattr(
+        WeChatSender, "_default_material_dir",
+        classmethod(lambda cls: str(tmp_path)))
+
+    s = WeChatSender()
+    s._config = {}  # 模拟「从未配置 material_dir」
+    assert s._material_dir() == str(tmp_path), "未回退到默认素材目录"
+
+    resolved = s._image_ref("报价单")
+    assert resolved and os.path.basename(resolved) == "报价单.png", \
+        f"素材未解析成功，实际: {resolved!r}"
+
+
+def test_end_to_end_material_reaches_customer(tmp_path, monkeypatch):
+    """全链路：LLM 回复含 {image:报价单} -> 客户收到干净文本且图片真发出。
+
+    刻意模拟真实场景：config 里从未配置 material_dir，
+    必须靠「回退到 UI 上传目录」才能找到素材——这正是线上实际的形态。
+    """
+    (tmp_path / "报价单.png").write_bytes(b"x")
+    monkeypatch.setattr(
+        WeChatSender, "_default_material_dir",
+        classmethod(lambda cls: str(tmp_path)))
+
+    s = build_impl_sender()
+    s._config = {}  # 模拟真实配置：没有 material_dir 这个键
+    fake_mouse = mock.MagicMock(name="human_like_mouse")
+    s._human_like_mouse = fake_mouse
+
+    reply = "报价如下 {image:报价单} 请查收，有问题随时联系我。"
+    res = s.send_report(make_report("客户A", "报价多少？", reply))
+
+    pasted = [c.args[1] for c in s._rpa._send_text_via_clipboard.call_args_list]
+    assert pasted, "未发生任何文本发送"
+    for text in pasted:
+        assert "{image:" not in text, f"脏标记泄漏给客户: {text!r}"
+    assert fake_mouse.paste_image_and_enter.call_count == 1, \
+        "报价单图片应被真正发送一次"
+    sent_path = fake_mouse.paste_image_and_enter.call_args[0][1]
+    assert os.path.basename(sent_path) == "报价单.png", f"发送了错误的素材: {sent_path}"
+    assert res["action"] == "send_text_and_materials", \
+        f"action 应为 send_text_and_materials，实际: {res['action']}"
