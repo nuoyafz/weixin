@@ -1,0 +1,40 @@
+# 冒烟测试样例配置（提交入库，不含任何明文密钥）
+# 真实密钥通过环境变量 VISREPLY_API_KEY 注入（本地 .env / CI repo secret）
+# 本文件用于验证：密钥占位符展开、超时兜底抬45、关RAG 读取等逻辑。
+app:
+  name: "VisReply"
+  version: "v1.6.12"
+
+vision_model:
+  provider: openai_compatible
+  base_url: "https://llm-b1hoacm0oh3hm1oa.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+  api_key: ${VISREPLY_API_KEY}
+  api_key_required: false
+  api_style: openai_compatible
+  model: qwen3.8-27b
+  timeout_seconds: 18          # <30，应被 load_settings 兜底抬到 45
+  image_input: true
+  ocr_enabled: true
+
+ocr_roi:
+  enabled: true
+  top_ratio: 0.045
+  bottom_px: 60
+  save_debug: false
+
+text_model:
+  provider: openai_compatible
+  base_url: "https://llm-b1hoacm0oh3hm1oa.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+  api_key: ${VISREPLY_API_KEY}
+  api_key_required: true
+  model: qwen3.8-27b
+  timeout_seconds: 20          # <30，应被兜底抬到 45
+  temperature: 0.2
+  max_tokens: 900
+
+rag:
+  enabled: false               # 关 RAG -> _free_chat 宽松规则生效（空回复降级前提）
+
+wechat:
+  no_reply_skip_threshold: 2
+  no_reply_skip_cooldown_seconds: 120
