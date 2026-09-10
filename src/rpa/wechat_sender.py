@@ -258,6 +258,12 @@ class WeChatSender:
             return {"ok": False, "reason": "current_chat_mismatch",
                     "guard": {}, "action": "send_text"}
 
+        # 主链路必须先清洗 {image:name} 素材引用：清洗前若 reply 含该标记，
+        # 会作为脏文本原样发给客户；解析出的素材追加到 materials 正常发送。
+        reply, ref_image_paths = self._resolve_image_refs(reply)
+        if ref_image_paths:
+            materials = list(materials or []) + list(ref_image_paths)
+
         reply_segments = self._reply_segments(reply)
         reply_segments = self._join_short_reply_lines(reply_segments)
 
@@ -299,33 +305,17 @@ class WeChatSender:
                     path = str(material)
                     title = ""
 
-                if kind == "image" and path and os.path.exists(path):
-                    if self._human_like_mouse and hasattr(
-                            self._human_like_mouse, 'paste_image_and_enter'):
-                        self._human_like_mouse.paste_image_and_enter(hwnd, path)
-                        ok_count += 1
-                        send_log.append({"kind": kind, "path": path, "ok": True})
-                    else:
-                        self._rpa._send_text_via_clipboard(hwnd, path)
-                        time.sleep(0.15)
-                        self._rpa.send_key_press(0x0D)
-                        ok_count += 1
-                        send_log.append({"kind": kind, "path": path, "ok": True})
-                elif kind in ("file", "video") and path and os.path.exists(path):
-                    if self._human_like_mouse and hasattr(
-                            self._human_like_mouse, 'paste_file_and_enter'):
-                        self._human_like_mouse.paste_file_and_enter(hwnd, path)
-                        ok_count += 1
-                        send_log.append({"kind": kind, "path": path, "ok": True})
-                    else:
-                        self._rpa._send_text_via_clipboard(hwnd, path)
-                        time.sleep(0.15)
-                        self._rpa.send_key_press(0x0D)
-                        ok_count += 1
-                        send_log.append({"kind": kind, "path": path, "ok": True})
+                # 图片 / 文件 / 视频三个分支已收敛为单个素材发送原语
+                # （_send_material_once），发送逻辑全项目只保留一份。
+                if self._send_material_once(hwnd, path, kind):
+                    ok_count += 1
+                    send_log.append({"kind": kind, "path": path, "ok": True})
                 else:
-                    send_log.append({"kind": kind, "path": path,
-                                     "ok": False, "reason": "not_found"})
+                    _exists = bool(path) and os.path.exists(path)
+                    send_log.append({
+                        "kind": kind, "path": path, "ok": False,
+                        "reason": "paste_failed" if _exists else "not_found",
+                    })
 
                 time.sleep(self._segment_delay())
 
@@ -593,6 +583,35 @@ class WeChatSender:
                 if os.path.exists(path):
                     return path
         return None
+
+    def _send_material_once(self, hwnd: int, path: str,
+                            kind: str = "image") -> bool:
+        """装载并发送单个素材（图片/文件/视频），返回发送是否成功。
+
+        统一收敛原本在 materials 循环里逐行重复的 image / file 两个分支：
+        图片走 paste_image_and_enter，文件与视频走 paste_file_and_enter，
+        拟人鼠标不可用时降级为剪贴板输入 + 回车。
+        """
+        if kind not in ("image", "file", "video"):
+            return False
+        if not path or not os.path.exists(path):
+            return False
+
+        paste_method = ("paste_file_and_enter" if kind in ("file", "video")
+                        else "paste_image_and_enter")
+        if self._human_like_mouse and hasattr(self._human_like_mouse,
+                                              paste_method):
+            getattr(self._human_like_mouse, paste_method)(hwnd, path)
+            return True
+
+        # 降级路径补充了 _rpa 缺失保护：原实现无此判断，
+        # 拟人鼠标与 RPA 同时不可用时会抛 AttributeError 中断整个 send_report。
+        if not self._rpa:
+            return False
+        self._rpa._send_text_via_clipboard(hwnd, path)
+        time.sleep(0.15)
+        self._rpa.send_key_press(0x0D)
+        return True
 
     # ---------------------------------------------------------------
     # 发送图片
