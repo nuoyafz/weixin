@@ -23,7 +23,8 @@ class VisionModelClient:
     def __init__(self, base_url: str = "", api_key: str = "",
                  model: str = "", temperature: float = 0.1,
                  max_tokens: int = 1800, timeout_seconds: int = 110,
-                 image_detail: str = "high"):
+                 image_detail: str = "high",
+                 enable_thinking: Optional[bool] = None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -31,6 +32,13 @@ class VisionModelClient:
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
         self.image_detail = image_detail
+        # 思考模式开关（2026-09-10）：与 TextModelClient 同理，此前从不下发。
+        # None = 不干预（不下发该字段）；True/False = 显式开启/关闭。
+        if enable_thinking is None:
+            url = (self.base_url or "").lower()
+            if "aliyuncs.com" in url or "dashscope" in url:
+                enable_thinking = False
+        self.enable_thinking = enable_thinking
 
     # ---------- 对外接口 ----------
 
@@ -120,6 +128,12 @@ class VisionModelClient:
 
     # ---------- 底层 HTTP ----------
 
+    def _apply_thinking(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """按开关把 enable_thinking 合入请求体（None 表示不干预）。"""
+        if self.enable_thinking is not None:
+            payload["enable_thinking"] = bool(self.enable_thinking)
+        return payload
+
     def _request(self, payload: Dict[str, Any]) -> "urlopen":
         if not self.base_url:
             raise ValueError("API base_url is not configured")
@@ -143,6 +157,7 @@ class VisionModelClient:
             "max_tokens": self.max_tokens,
             "stream": False,
         }
+        self._apply_thinking(payload)
         try:
             with self._request(payload) as response:
                 resp_data = json.loads(response.read().decode("utf-8"))
@@ -161,6 +176,7 @@ class VisionModelClient:
             "max_tokens": self.max_tokens,
             "stream": True,
         }
+        self._apply_thinking(payload)
         response = None
         try:
             response = self._request(payload)
@@ -215,4 +231,5 @@ def client_from_config(cfg) -> VisionModelClient:
         temperature=cfg.temperature,
         max_tokens=cfg.max_tokens,
         timeout_seconds=cfg.timeout_seconds,
+        enable_thinking=getattr(cfg, "enable_thinking", None),
     )

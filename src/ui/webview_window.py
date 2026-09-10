@@ -1098,14 +1098,19 @@ class WebviewBridge:
 
         def _build_body(m: str) -> dict:
             text_msg = {"role": "user", "content": "ping"}
-            if not _looks_vision(m):
-                return {"model": m, "messages": [text_msg], "max_tokens": 5, "temperature": 0, "stream": False}
-            text_msg["content"] = [
-                {"type": "text", "text": "ping"},
-                {"type": "image_url", "image_url": {
-                    "url": f"data:image/png;base64,{_TINY_PNG}", "detail": "low"}}
-            ]
-            return {"model": m, "messages": [text_msg], "max_tokens": 5, "temperature": 0, "stream": False}
+            if _looks_vision(m):
+                text_msg["content"] = [
+                    {"type": "text", "text": "ping"},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/png;base64,{_TINY_PNG}", "detail": "low"}}
+                ]
+            body = {"model": m, "messages": [text_msg], "max_tokens": 5,
+                    "temperature": 0, "stream": False}
+            # 测试连接同样要关思考：qwen3 系列默认思考会吃掉 max_tokens=5 的全部预算，
+            # 导致正文为空、连接测试误判失败（2026-09-10）
+            if "aliyuncs.com" in base_url.lower() or "dashscope" in base_url.lower():
+                body["enable_thinking"] = False
+            return body
 
         def _list_models() -> list:
             try:

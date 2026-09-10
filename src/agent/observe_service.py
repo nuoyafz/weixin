@@ -148,6 +148,7 @@ class ObserveService:
             base_url=vm_cfg.get("base_url", ""),
             api_key=vm_cfg.get("api_key", ""),
             model=vm_cfg.get("model", ""),
+            enable_thinking=vm_cfg.get("enable_thinking", None),
         )
 
         # 文本模型（修复：必须传入完整 config，否则内部 available()/ModelRouter
@@ -398,6 +399,7 @@ class ObserveService:
                 base_url=vm_cfg.get("base_url", ""),
                 api_key=vm_cfg.get("api_key", ""),
                 model=vm_cfg.get("model", ""),
+                enable_thinking=vm_cfg.get("enable_thinking", None),
             )
         except Exception:
             pass

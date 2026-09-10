@@ -56,6 +56,11 @@ class TextModelClient:
         # 缺失方法依赖的运行时属性（对齐 VisionLeadAgent-src 的 __init__）
         self.config = config or {}
         self.logger = logger
+        # 思考模式开关（2026-09-10 修复）：此前 UI(config.yaml:39) 与前端开关都有
+        # enable_thinking，但请求体从不携带该参数 -> qwen3.8 系列默认开启思考，
+        # 实测单次回复 12~21s、思考链占总 token 90%。此处把它真正下发。
+        # 语义：True=思考 / False=不思考 / None=不干预（不下发该字段）
+        self.enable_thinking = self._resolve_enable_thinking()
         self.router = ModelRouter(self.config, logger=logger)
         self.rag = RagRetriever()
         # HTTP 连接复用（2026-09-06 提速②）：urllib 每次 urlopen 都新建
@@ -72,6 +77,31 @@ class TextModelClient:
         self._sp_cache_sig = None
 
     # ---------- 对外接口 ----------
+
+    def _resolve_enable_thinking(self):
+        """决定是否向请求体下发 enable_thinking，返回 True/False/None。
+
+        - 配置里显式写了 enable_thinking -> 按配置下发（开关以此为准）
+        - 未显式配置且是阿里云百炼/dashscope 端点 -> 默认 False。
+          因为 qwen3.8/3.7/3.6/3.5 系列【默认开启思考】，不显式关闭就会一直思考，
+          而 UI 开关默认展示的也是"关闭"，两边保持一致。
+        - 其他端点 -> None（完全不下发，避免给非 OpenAI 标准参数的网关报错）
+        """
+        tm = {}
+        if isinstance(self.config, dict):
+            tm = self.config.get("text_model") or {}
+        if isinstance(tm, dict) and "enable_thinking" in tm:
+            return bool(tm.get("enable_thinking"))
+        url = (self.base_url or "").lower()
+        if "aliyuncs.com" in url or "dashscope" in url:
+            return False
+        return None
+
+    def _apply_thinking(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """按开关把 enable_thinking 合入请求体（None 表示不干预）。"""
+        if self.enable_thinking is not None:
+            payload["enable_thinking"] = bool(self.enable_thinking)
+        return payload
 
     def complete(self, system_prompt: str, user_message: str,
                  history: Optional[List[Dict]] = None,
@@ -157,6 +187,7 @@ class TextModelClient:
             "max_tokens": self.max_tokens,
             "stream": False,
         }
+        self._apply_thinking(payload)
         try:
             resp = self._request(payload)
             resp.raise_for_status()
@@ -183,6 +214,7 @@ class TextModelClient:
             "max_tokens": self.max_tokens,
             "stream": True,
         }
+        self._apply_thinking(payload)
         response = None
         try:
             response = self._request(payload, stream=True)
