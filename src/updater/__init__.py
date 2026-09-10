@@ -13,7 +13,6 @@ import json
 import hashlib
 import shutil
 import subprocess
-import threading
 import tempfile
 import zipfile
 from pathlib import Path
@@ -211,7 +210,7 @@ def start_update(win=None, manifest=None):
     _push(win, "window.__onUpdateProgress(98);")
     subprocess.Popen(["cmd.exe", "/c", str(bat)], creationflags=_DETACHED, close_fds=True)
     _push(win, "window.__onUpdateRestarting();")
-    threading.Timer(0.8, lambda: os._exit(0)).start()
+    os._exit(0)
 
 
 def _verify_and_extract(zip_path, staged, files):
@@ -265,6 +264,7 @@ def _make_increment_bat(staged, app_dir, exe, ver):
         "if %errorlevel%==0 (\r\n"
         '  echo [%time%] verify OK >> %LOG%\r\n'
         '  echo %VER% > "%APP%\\_just_updated.txt"\r\n'
+        '  del "%APP%\\_update_failed.txt" >nul 2>&1\r\n'
         '  echo [%time%] restart >> %LOG%\r\n'
         '  start "" "%EXE%"\r\n'
         "  goto :EOF\r\n"
@@ -296,7 +296,7 @@ def _do_full_update(win, full_url):
     bat.write_text(_make_full_bat(setup, app_dir, exe), encoding="utf-8")
     _push(win, "window.__onUpdateRestarting();")
     subprocess.Popen(["cmd.exe", "/c", str(bat)], creationflags=_DETACHED, close_fds=True)
-    threading.Timer(0.8, lambda: os._exit(0)).start()
+    os._exit(0)
 
 
 def _make_full_bat(setup, app_dir, exe):
@@ -333,6 +333,7 @@ def _make_full_bat(setup, app_dir, exe):
             "  goto :EOF\r\n"
             ")\r\n"
             f'echo [%time%] launch new exe >> "{log}"\r\n'
+            f'del "{a}\\_just_updated.txt" "{a}\\_update_failed.txt" >nul 2>&1\r\n'
             f'start "" "{e}"\r\n')
 
 
@@ -362,9 +363,11 @@ def maybe_fallback_full_update():
         # 清理标记，避免重复触发（整包会彻底覆盖并重写 _just_updated.txt）
         for f in (failed, just):
             try:
-                f.unlink()
-            except Exception:
-                pass
+                if f.exists():
+                    f.unlink()
+                    print(f"[updater] 已清理残留标记 {f.name}，避免重复触发整包更新")
+            except Exception as _e:  # noqa: BLE001
+                print(f"[updater] 清理标记失败 {f.name}: {_e}")
         manifest = _http_get_json(_resolve_server() + "/version.json")
         full = manifest.get("full_package")
         if full:

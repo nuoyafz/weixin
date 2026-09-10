@@ -1150,8 +1150,20 @@ class WebviewBridge:
             if ok:
                 try:
                     from ..reply.model_check import ModelChecker
+                    # 尊重用户“关闭深度思考”设置：优先取前端传入，否则回退 config 的
+                    # text_model.enable_thinking；None 表示交给 ModelChecker 按端点决定
+                    # （aliyuncs/dashscope 默认关思考），避免 speed_check 走思考链拖慢。
+                    _et = data.get("enable_thinking")
+                    if _et is None:
+                        try:
+                            _cfg = self.window._load_yaml() or {}
+                            _tm = _cfg.get("text_model") or {}
+                            _et = _tm.get("enable_thinking")
+                        except Exception:
+                            _et = None
                     _sp = ModelChecker(base_url, api_key, model,
-                                       timeout_seconds=20).speed_check(rounds=3)
+                                       timeout_seconds=20,
+                                       enable_thinking=_et).speed_check(rounds=3)
                     if _sp.get("ok"):
                         speed_payload = {
                             "avg_ms": _sp.get("avg_ms", 0),

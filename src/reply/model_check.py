@@ -17,11 +17,14 @@ from typing import Any, Dict, List, Optional
 
 class ModelChecker:
     def __init__(self, base_url: str, api_key: str = "", model: str = "",
-                 timeout_seconds: int = 20):
+                 timeout_seconds: int = 20, enable_thinking: Optional[bool] = None):
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key or ""
         self.model = model or ""
         self.timeout_seconds = timeout_seconds
+        # None = 由端点决定（aliyuncs/dashscope 默认强制关闭，避免 qwen3 系列走思考链
+        # 拖慢速度检查）；显式传 True/False 时尊重调用方选择（如测试连接透传用户设置）。
+        self.enable_thinking = enable_thinking
 
     # ---- 内部工具 ----
     def _headers(self) -> Dict[str, str]:
@@ -44,6 +47,13 @@ class ModelChecker:
             "temperature": 0,
             "stream": False,
         }
+        # 思考模式（qwen3 系列在 aliyuncs/dashscope 默认开启）会吃掉 max_tokens 预算并
+        # 拖慢首字；连通性/速度检查应关掉。显式传值时尊重调用方；否则 aliyuncs/dashscope
+        # 端点强制关闭（与测试连接 ping 的 2026-09-10 修复保持一致）。
+        if self.enable_thinking is not None:
+            body["enable_thinking"] = bool(self.enable_thinking)
+        elif any(k in self.base_url.lower() for k in ("aliyuncs.com", "dashscope")):
+            body["enable_thinking"] = False
         req = urllib.request.Request(
             endpoint, data=json.dumps(body).encode("utf-8"),
             headers=self._headers(), method="POST")
