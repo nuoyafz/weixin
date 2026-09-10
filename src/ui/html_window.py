@@ -2384,16 +2384,42 @@ class HtmlMainWindow(QMainWindow):
         return out
 
     def _load_yaml(self) -> dict:
-        """读取 config.yaml 返回原始 dict（读取失败返回空 dict）。"""
+        """读取 config.yaml 返回 dict（安全修复#2：返回已展开的配置）。
+
+        与 webview_window._load_yaml 对齐：`.env` 的 `${VAR}` 展开成真值、
+        空 api_key 用环境变量兜底，避免把字面量占位符当密钥用。
+        """
         try:
             import yaml
             cfg_path = Path(__file__).resolve().parents[2] / "config.yaml"
             if cfg_path.exists():
                 with open(cfg_path, encoding="utf-8") as f:
-                    return yaml.safe_load(f) or {}
+                    raw = yaml.safe_load(f) or {}
+                if not isinstance(raw, dict):
+                    return {}
+                try:
+                    from ..config.settings import expand_env_config
+                    return expand_env_config(raw)
+                except Exception:  # noqa: BLE001
+                    return raw
         except Exception as e:  # noqa: BLE001
             _term(f"[ui] load config.yaml failed: {e}")
         return {}
+
+    @staticmethod
+    def _api_key_for_config(api_key: str) -> str:
+        """把前端传来的 key 转成 config.yaml 该写的值（占位符，非明文）。"""
+        try:
+            from ..config.secret_store import to_env_placeholder
+        except Exception:  # noqa: BLE001
+            try:
+                from src.config.secret_store import to_env_placeholder
+            except Exception:  # noqa: BLE001
+                return api_key
+        try:
+            return to_env_placeholder(api_key) or api_key
+        except Exception:  # noqa: BLE001
+            return api_key
 
     def _patch_text_model_in_yaml(self, base_url: str, api_key: str, model: str) -> bool:
         """就地更新 config.yaml 的 text_model 段（base_url/api_key/model），
@@ -2402,7 +2428,7 @@ class HtmlMainWindow(QMainWindow):
         if base_url:
             fields["base_url"] = base_url
         if api_key:
-            fields["api_key"] = api_key
+            fields["api_key"] = self._api_key_for_config(api_key)
         if model:
             fields["model"] = model
         if not fields:
@@ -2418,7 +2444,7 @@ class HtmlMainWindow(QMainWindow):
         if base_url:
             fields["base_url"] = base_url
         if api_key:
-            fields["api_key"] = api_key
+            fields["api_key"] = self._api_key_for_config(api_key)
         if model:
             fields["model"] = model
             # 有模型名即视为走 openai 兼容（不能因 base_url 空而降级 local，

@@ -3200,24 +3200,43 @@ class WebviewApp:
         return out
 
     def _load_yaml(self) -> dict:
-        """读取 config.yaml 返回原始 dict（读取失败返回空 dict）。"""
+        """读取 config.yaml 返回 dict（读取失败返回空 dict）。
+
+        安全修复#2：返回**已展开**的配置——`.env`/环境变量里的 `${VAR}`
+        换成真值，空 api_key 用环境变量兜底。此前返回原始 dict，导致
+        UI 里的「测试连接 / 模拟问答 / 热重载」拿到字面量 `${VISREPLY_API_KEY}`
+        当密钥用（必然 401）。写盘方向则由 `_api_key_for_config()` 反向转回
+        占位符，保证磁盘上永远没有明文。
+        """
         try:
             import yaml
             cfg_path = Path(__file__).resolve().parents[2] / "config.yaml"
             if cfg_path.exists():
                 with open(cfg_path, encoding="utf-8") as f:
-                    return yaml.safe_load(f) or {}
+                    raw = yaml.safe_load(f) or {}
+                if not isinstance(raw, dict):
+                    return {}
+                try:
+                    from ..config.settings import expand_env_config
+                    return expand_env_config(raw)
+                except Exception:  # noqa: BLE001
+                    return raw
         except Exception as e:  # noqa: BLE001
             _term(f"[ui] load config.yaml failed: {e}")
         return {}
 
     def _patch_text_model_in_yaml(self, base_url: str, api_key: str, model: str) -> bool:
-        """就地更新 config.yaml 的 text_model 段，只写非空字段。"""
+        """就地更新 config.yaml 的 text_model 段，只写非空字段。
+
+        安全修复#2：api_key 绝不落明文——前端回传的是展开后的真值，
+        统一经 `to_env_placeholder()` 转成 `${VISREPLY_API_KEY}` 再写盘，
+        真值写入项目根 .env（详见 src/config/secret_store.py）。
+        """
         fields = {}
         if base_url:
             fields["base_url"] = base_url
         if api_key:
-            fields["api_key"] = api_key
+            fields["api_key"] = self._api_key_for_config(api_key)
         if model:
             fields["model"] = model
         if not fields:
@@ -3226,12 +3245,15 @@ class WebviewApp:
 
     def _patch_vision_model_in_yaml(self, base_url: str, api_key: str, model: str,
                                     ocr_mode: str = "hybrid") -> bool:
-        """就地更新 config.yaml 的 vision_model 段，并切到 openai_compatible。"""
+        """就地更新 config.yaml 的 vision_model 段，并切到 openai_compatible。
+
+        api_key 处理同 `_patch_text_model_in_yaml`（外置到 .env）。
+        """
         fields = {}
         if base_url:
             fields["base_url"] = base_url
         if api_key:
-            fields["api_key"] = api_key
+            fields["api_key"] = self._api_key_for_config(api_key)
         if model:
             fields["model"] = model
             fields["provider"] = "openai_compatible"
@@ -3241,6 +3263,24 @@ class WebviewApp:
         if not fields:
             return True
         return self._patch_block_in_yaml("vision_model:", fields)
+
+    @staticmethod
+    def _api_key_for_config(api_key: str) -> str:
+        """把前端传来的 key 转成 config.yaml 该写的值（占位符，不是明文）。"""
+        try:
+            from ..config.secret_store import to_env_placeholder
+        except Exception:
+            try:
+                from src.config.secret_store import to_env_placeholder
+            except Exception:
+                return api_key
+        try:
+            out = to_env_placeholder(api_key)
+            if out:
+                _term(f"[ui] api_key 已外置：config.yaml 写 {out}，真值存入 .env")
+            return out
+        except Exception:  # noqa: BLE001
+            return api_key
 
     def _patch_block_in_yaml(self, block_key: str, fields: dict) -> bool:
         """就地更新 config.yaml 中指定段的字段，保留其余内容与注释。"""
