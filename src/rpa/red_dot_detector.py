@@ -225,12 +225,20 @@ class RedDotDetector:
     # 点前黑名单拦截（OCR 昵称行 → is_blacklisted_contact）
     # -----------------------------------------------------------------
     def _get_nick_ocr(self):
-        """懒加载昵称 OCR 引擎（与徽章数字 OCR 分开，按需初始化）。"""
+        """取昵称识别用的 OCR 引擎（与徽章 OCR 共用同一份单例）。
+
+        改动前这里又自建一份 OCREngine（且走绝对导入 src.local_vision.ocr_engine，
+        是同一文件的**第三个**类副本），与徽章 OCR、clean_perception reader 各占
+        一份 RapidOCR 模型 + 独立 onnxruntime 线程池（每份约 32MB RSS）。
+        OCREngine.run() 不改动自身状态，两条路径共用一份实例安全无副作用。
+        仍保留独立的 `_nick_ocr` 缓存字段（False 为失败哨兵，避免反复重试）。
+        """
         if self._nick_ocr is None:
             try:
-                from src.local_vision.ocr_engine import OCREngine
-                ocr = OCREngine()
-                ocr.initialize()
+                from ..ocr.ocr_pool import get_vision_ocr
+                ocr = get_vision_ocr()
+                if ocr is None:
+                    raise RuntimeError("vision ocr engine unavailable")
                 self._nick_ocr = ocr
             except Exception as e:
                 self._debug_log(f"昵称 OCR 初始化失败: {e}")
@@ -1577,26 +1585,22 @@ class RedDotDetector:
     # =================================================================
 
     def _get_ocr(self):
-        """懒加载 OCR 引擎（按路径加载，绕开 local_vision/__init__ 脆弱链）。"""
+        """取**共享**的视觉 OCR 引擎（进程级单例，见 src/ocr/ocr_pool.py）。
+
+        改动前：这里自带 importlib 加载 + new 一份 OCREngine，而 clean_perception
+        reader 也自带一份（模块别名不同 → 类都不共享），叠加多个 RedDotDetector
+        实例 → 同一份 RapidOCR 模型在进程里最多建 6 份 session（各 0.5~2s、
+        数百 MB、各自独立的 onnxruntime 线程池），冷启动慢、内存翻倍、OCR 时
+        CPU 相互抢占，且主 OCR 已预热时红点徽章那份仍是冷的。
+
+        现统一走 ocr_pool.get_vision_ocr()：全进程只保留一份模型与线程池。
+        返回 None 表示引擎不可用（调用方原样处理）；失败带 30s 冷却重试。
+        """
         if self._ocr_engine is not None:
             return self._ocr_engine
         try:
-            import importlib.util
-            import os
-            here = os.path.dirname(os.path.abspath(__file__))
-            engine_path = os.path.abspath(
-                os.path.join(here, "..", "local_vision", "ocr_engine.py"))
-            spec = importlib.util.spec_from_file_location(
-                "rpa._ocrengine", engine_path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            OCREngine = getattr(mod, "OCREngine", None)
-            if OCREngine is None:
-                self._ocr_engine = None
-                return None
-            self._ocr_engine = OCREngine()
-            if not self._ocr_engine.is_ready():
-                self._ocr_engine.initialize()
+            from ..ocr.ocr_pool import get_vision_ocr
+            self._ocr_engine = get_vision_ocr()
         except Exception:
             self._ocr_engine = None
         return self._ocr_engine

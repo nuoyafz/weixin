@@ -39,11 +39,16 @@ class VoiceToTextConverter:
 
     def __init__(self, config=None, capture=None, logger=None):
         from ..capture.screen_capture import ScreenCapture
-        from ..local_vision.ocr_engine import OCREngine
+        from ..ocr.ocr_pool import get_vision_ocr
 
         self.config = config or {}
         self.capture = capture or ScreenCapture()
-        self.ocr = OCREngine()
+        # OCR 走进程级单例池：原先这里自建一份 OCREngine，一旦启用语音转文字
+        # （voice_messages.auto_convert_to_text 打开）就会再多加载一份 RapidOCR
+        # 模型（约 32MB + 独立 onnxruntime 线程池），见 src/ocr/ocr_pool.py。
+        # 取不到时为 None，下面各处 self.ocr.run(...) 均已包在 try/except 内，
+        # 会安全降级为空结果。
+        self.ocr = get_vision_ocr()
         self.logger = logger or (lambda msg: None)
 
     # ---------------------------------------------------------------

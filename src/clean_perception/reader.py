@@ -356,26 +356,16 @@ class WechatScreenReader:
     def _get_ocr(self) -> Any:
         if self._ocr is not None:
             return self._ocr
-        # 复用项目里干净的 RapidOCR 封装（local_vision/ocr_engine.py）。
-        # 注意：直接按文件路径加载该模块，绕开 local_vision/__init__.py
-        # 里那个会触发越级相对导入(..message.parser)的脆弱链。
+        # 复用项目里干净的 RapidOCR 封装（local_vision/ocr_engine.py），
+        # 但改为经 ocr_pool 取**进程级单例**：
+        #  · 该封装仍按文件路径加载，绕开 local_vision/__init__.py 里那条会
+        #    触发越级相对导入(..message.parser)的脆弱链；
+        #  · 关键修正：模块别名统一（原先这里是 "clean_perception._ocrengine"、
+        #    red_dot_detector 里是 "rpa._ocrengine"，同一文件被 exec 两次、
+        #    类都不共享），RapidOCR 模型由"每处一份"收敛为全进程一份。
         try:
-            import importlib.util
-            import os
-            here = os.path.dirname(os.path.abspath(__file__))
-            engine_path = os.path.abspath(
-                os.path.join(here, "..", "local_vision", "ocr_engine.py"))
-            spec = importlib.util.spec_from_file_location(
-                "clean_perception._ocrengine", engine_path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            OCREngine = getattr(mod, "OCREngine", None)
-            if OCREngine is None:
-                self._ocr = None
-                return None
-            self._ocr = OCREngine()
-            if not self._ocr.is_ready():
-                self._ocr.initialize()
+            from ..ocr.ocr_pool import get_vision_ocr
+            self._ocr = get_vision_ocr()
         except Exception:
             self._ocr = None
         return self._ocr

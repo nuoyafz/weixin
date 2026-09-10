@@ -47,10 +47,10 @@ class FriendRequestAcceptor:
     ACCEPT_KEYWORDS = ["通过验证", "接受", "添加到通讯录", "发消息"]
 
     def __init__(self, config=None, window_manager=None, capture=None,
-                 logger=None):
+                 logger=None, red_dot=None):
         from ..desktop.wechat_window_manager import WeChatWindowManager
         from ..capture.screen_capture import ScreenCapture
-        from ..local_vision.ocr_engine import OCREngine
+        from ..ocr.ocr_pool import get_vision_ocr
         from ..rpa.red_dot_detector import RedDotDetector
         from ..rpa.human_like_mouse import HumanLikeMouse
 
@@ -58,8 +58,14 @@ class FriendRequestAcceptor:
         self.logger = logger or (lambda msg: None)
         self.window_manager = window_manager or WeChatWindowManager()
         self.capture = capture or ScreenCapture()
-        self.ocr = OCREngine()
-        self.red_dot = RedDotDetector()
+        # OCR 走进程级单例池（原先这里自建一份 OCREngine，与主感知/红点检测
+        # 各一份互不共享 → RapidOCR 模型被重复加载，见 src/ocr/ocr_pool.py）。
+        # 取不到时保持 None：下面两处 OCR 调用点都包在 try/except 内，
+        # 会安全降级（返回空结果/False），不会 AttributeError 崩链路。
+        self.ocr = get_vision_ocr()
+        # red_dot 允许外部注入：observe_service 会传入它那一个已绑好
+        # config/screen_capture/logger 的 detector，避免再 new 一份。
+        self.red_dot = red_dot or RedDotDetector()
         self.mouse = HumanLikeMouse()
         self._allow_foreground_fallback = True
 

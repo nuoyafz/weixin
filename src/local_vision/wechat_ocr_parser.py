@@ -356,9 +356,13 @@ class WeChatOCRParser:
         import time
         t0 = time.time()
         try:
-            from ..ocr.engine import OCREngine
-            engine = OCREngine()
-            engine.initialize()
+            # OCR 引擎走进程级单例池：原先每次调用都 `OCREngine()` + initialize()
+            # 新建一份，等于每次重载一遍 RapidOCR 模型（约 0.2s、32MB 常驻，
+            # 且反复分配/回收 onnxruntime 会话）。见 src/ocr/ocr_pool.py。
+            from ..ocr.ocr_pool import get_text_ocr
+            engine = get_text_ocr()
+            if engine is None:
+                return [], None, round(time.time() - t0, 3), "ocr_engine_unavailable"
             img = None
             if screenshot_path:
                 import cv2

@@ -1219,18 +1219,25 @@ class ObserveService:
         return mode if mode in valid else "hybrid"
 
     def _ensure_local_ocr(self) -> bool:
-        """惰性初始化本地 OCR 引擎 + 布局解析器。"""
+        """惰性初始化本地 OCR 引擎 + 布局解析器（引擎走进程级单例池）。
+
+        改动前这里 ``OCREngine()`` 自带一份引擎，与 clean_perception reader、
+        red_dot_detector 各自持有的实例互不共享 —— 同一份 RapidOCR 模型在进程内
+        被建了多份 onnxruntime session。现统一取 ocr_pool.get_text_ocr()，
+        与其余调用点共用一份（见 src/ocr/ocr_pool.py 的说明）。
+        """
         if self._local_ocr is None:
             try:
-                from ..ocr.engine import OCREngine
+                from ..ocr.ocr_pool import get_text_ocr
                 from ..local_vision.wechat_layout_parser import WechatLayoutParser
-                engine = OCREngine()
-                if not engine.initialize():
-                    self.store.append_log("local_ocr_init_failed reason=initialize_false")
+                engine = get_text_ocr()
+                if engine is None:
+                    self.store.append_log(
+                        "local_ocr_init_failed reason=engine_unavailable")
                     return False
                 self._local_ocr = engine
                 self._local_layout = WechatLayoutParser()
-                self.store.append_log("local_ocr_ready engine=rapidocr")
+                self.store.append_log("local_ocr_ready engine=rapidocr shared=1")
             except Exception as e:
                 self.store.append_log(f"local_ocr_init_failed err={e}")
                 return False
