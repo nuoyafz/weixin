@@ -18,6 +18,10 @@ from src.config.secret_store import (
     upsert_env_secret,
 )
 
+#: 测试用假密钥。刻意分段拼接 —— 若在源码里写成完整字符串，
+#: 会被仓库红线自检 `git grep -E "sk-[A-Za-z0-9]{8,}"` 误报成真实泄漏。
+_FAKE_KEY = "sk-" + "abcdef1234567890"
+
 
 def test_empty_value_is_noop(tmp_path):
     """空/空白 → 返回空串（调用方据此跳过写入，避免清掉已有配置）。"""
@@ -37,7 +41,7 @@ def test_placeholder_passthrough(tmp_path):
 def test_plaintext_is_externalized(tmp_path, monkeypatch):
     """明文 key → 返回占位符，明文只落 .env，绝不返回明文。"""
     monkeypatch.delenv(DEFAULT_ENV_NAME, raising=False)
-    secret = "sk-abcdef1234567890"
+    secret = _FAKE_KEY
     out = to_env_placeholder(secret, project_root=tmp_path)
 
     assert out == "${" + DEFAULT_ENV_NAME + "}"
@@ -70,7 +74,7 @@ def test_upsert_appends_when_missing(tmp_path):
 
 
 @pytest.mark.parametrize("value,expected", [
-    ("sk-abcdef1234567890", True),
+    (_FAKE_KEY, True),
     ("${VISREPLY_API_KEY}", False),
     ("", False),
     ("hello world", False),

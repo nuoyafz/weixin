@@ -29,8 +29,13 @@ jobs:
           pip install --no-cache-dir pyyaml requests pytest numpy Pillow
 
       - name: Diagnostic - verify core imports
-        # 跑测试前先单独验证两个核心模块能导入，失败则给出清晰的错误来源。
-        run: python -c "import sys; sys.path.insert(0, '.'); import src.config.settings, src.ai.text_model_client; print('IMPORT OK')"
+        # 跑测试前先单独验证核心模块能导入，失败则给出清晰的错误来源。
+        # src.rpa 之前会因顶层 `import win32con`（human_like_mouse）在
+        # Linux runner 上崩掉，拖死整个 smoke job —— 这里显式探一次，
+        # 让该回归一眼可见（pywin32 已改为可选依赖）。
+        run: |
+          python -c "import sys; sys.path.insert(0, '.'); import src.config.settings, src.ai.text_model_client; print('IMPORT OK')"
+          python -c "import sys; sys.path.insert(0, '.'); import src.rpa, src.rpa.wechat_sender; print('RPA IMPORT OK')"
 
       - name: Run smoke tests
         env:

@@ -22,9 +22,30 @@ from pathlib import Path
 from typing import Any, Optional, Tuple
 
 import numpy as np
-import win32con
-import win32gui
-import win32process
+
+# pywin32 仅 Windows 可用。这里做成可选导入，保证包在非 Windows 环境
+# （如 CI 的 Linux runner、静态检查工具）仍能被 import —— 否则
+# `import src.rpa` 会在 __init__ 里直接炸，整个 smoke 测试无法收集。
+# 真实调用（click_absolute_win32 / 前台窗口管理等）仍需要 Windows，
+# 缺依赖时由 _require_win32() 抛出明确错误。
+try:
+    import win32con
+    import win32gui
+    import win32process
+    WIN32_AVAILABLE = True
+except ImportError:  # pragma: no cover - 非 Windows 环境
+    win32con = None
+    win32gui = None
+    win32process = None
+    WIN32_AVAILABLE = False
+
+
+def _require_win32() -> None:
+    """Windows 专属能力的前置校验，非 Windows 环境给出可读报错。"""
+    if not WIN32_AVAILABLE:
+        raise RuntimeError(
+            "HumanLikeMouse 的 Windows 原生能力需要 pywin32（win32con/"
+            "win32gui/win32process），当前环境不可用")
 
 
 class HumanLikeMouse:
@@ -42,6 +63,7 @@ class HumanLikeMouse:
     MOUSEEVENTF_MIDDLEUP = 0x0040
 
     def __init__(self, config=None, window_manager=None):
+        _require_win32()
         self._config = config or {}
         self._window_manager = window_manager
         self._user32 = ctypes.windll.user32
