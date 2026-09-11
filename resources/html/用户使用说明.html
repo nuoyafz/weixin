@@ -575,7 +575,7 @@
       </aside>
     </div>
       <div class="journey" aria-label="使用流程概览">
-        <div class="journey-item"><span class="journey-index">01</span><div><strong>安装依赖</strong><span>链接原项目 _internal，运行 start.bat 建环境装依赖。</span></div></div>
+        <div class="journey-item"><span class="journey-index">01</span><div><strong>安装软件</strong><span>下载 VisReply 安装包，双击安装即可，环境依赖已内置。</span></div></div>
         <div class="journey-item"><span class="journey-index">02</span><div><strong>配置模型</strong><span>填好接口地址、API Key 与模型名称，再做模型检测。</span></div></div>
         <div class="journey-item"><span class="journey-index">03</span><div><strong>检测并启动</strong><span>一键检测通过后启动，用小号测试回复。</span></div></div>
       </div>
@@ -596,8 +596,7 @@
       <h2>按这个顺序来</h2>
       <p>第一次使用，从上到下完成。</p>
       <ol>
-        <li>链接/复制 _internal</li>
-        <li>运行 start.bat 建环境</li>
+        <li>下载并安装软件</li>
         <li>配置模型接口与密钥</li>
         <li>填写业务资料</li>
         <li>打开并登录微信</li>
@@ -614,11 +613,10 @@
           <div><h2>第一次使用</h2><p>先把运行环境和模型接口配好，再启动助手。</p></div>
         </div>
         <ol class="steps">
-          <li>把原 VisionLeadAgent 的 <code>_internal</code> 目录链接或复制到本项目根目录（内含 RapidOCR 与 ONNX Runtime）。</li>
-          <li>运行 <code>start.bat</code>（或 <code>python setup.py</code>），自动创建虚拟环境并安装 PySide6、OpenCV、RapidOCR 等依赖。</li>
-          <li>打开 <code>config.yaml</code>，填好 <code>vision_model</code> 与 <code>text_model</code> 的接口地址、API Key 和模型名称（默认已接 Aliyun maas compatible-mode/v1）。</li>
-          <li>在“系统设置”里点“立即检查”做模型检测，显示可用后保存。</li>
-          <li>填好业务资料（知识库 / 回复风格等），先用自己的微信小号试几条消息。</li>
+          <li>下载并双击运行 <code>VisReply_Setup.exe</code>，按向导一路装好；本地 OCR 与视觉识别引擎已内置，无需再装任何依赖。</li>
+          <li>打开软件，在左侧「设置」里填好接口地址、API Key 与模型名称（默认已接 Aliyun maas compatible-mode/v1），模型检测显示可用后保存。</li>
+          <li>按需关闭「深度思考」——闲聊场景关掉更快，改完再点「立即检查」看真实速度。</li>
+          <li>填好业务资料（知识库 / 回复风格等），打开并登录微信，先用自己的微信小号试几条消息。</li>
         </ol>
         <div class="callout callout-ok">模型与 OCR 都走本地 + 你自己的大模型接口，无需任何付费授权。</div>
       </section>
@@ -669,7 +667,7 @@
         <ul class="checklist">
           <li>检测报 404 / 模型不存在：检查 <code>model</code> 名称是否写错。</li>
           <li>检测报鉴权失败：检查 <code>api_key</code> 是否正确。</li>
-          <li>延迟偏慢：换更小模型，或调低 <code>max_tokens</code> / <code>timeout_seconds</code>。</li>
+          <li>延迟偏慢：先在「设置」里<b>关闭「深度思考」</b>（闲聊场景提速明显），再考虑换更小模型或调低 <code>max_tokens</code> / <code>timeout_seconds</code>。</li>
         </ul>
       </section>
 
