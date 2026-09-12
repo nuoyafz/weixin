@@ -91,63 +91,147 @@ def aggregate(conn):
 
 DASHBOARD = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VisReply 使用统计</title>
+<title>VisReply · 使用情况仪表盘</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<meta name="theme-color" content="#05060f">
 <style>
-*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,"PingFang SC",sans-serif;
-background:#0f1221;color:#e6e8f0;padding:28px}
-h1{font-size:20px;font-weight:600;margin-bottom:18px;letter-spacing:.5px}
-.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px}
-.card{background:linear-gradient(145deg,#1b1f3a,#161a30);border:1px solid #2a3050;
-border-radius:14px;padding:20px}
-.card .n{font-size:30px;font-weight:700;background:linear-gradient(90deg,#5eead4,#818cf8);
--webkit-background-clip:text;background-clip:text;color:transparent}
-.card .l{font-size:13px;color:#9aa3c0;margin-top:6px}
-.grid{display:grid;grid-template-columns:1.4fr 1fr;gap:16px}
-.panel{background:#161a30;border:1px solid #2a3050;border-radius:14px;padding:16px}
-.panel h2{font-size:14px;color:#c3c9e6;margin-bottom:10px;font-weight:600}
-#trend{height:300px}#ver{height:300px}
+*{box-sizing:border-box;margin:0;padding:0}
+html{color-scheme:dark}
+body{font-family:'Inter','PingFang SC',system-ui,sans-serif;color:#e8ecff;min-height:100vh;
+  padding:32px clamp(16px,4vw,48px);position:relative;overflow-x:hidden;
+  background:
+    radial-gradient(1100px 600px at 82% -12%,rgba(129,140,248,.20),transparent 60%),
+    radial-gradient(900px 520px at -8% 112%,rgba(94,234,212,.14),transparent 55%),
+    #05060f;}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background-image:linear-gradient(rgba(120,140,255,.07) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(120,140,255,.07) 1px,transparent 1px);
+  background-size:46px 46px;
+  -webkit-mask-image:radial-gradient(circle at 50% 28%,#000 26%,transparent 82%);
+  mask-image:radial-gradient(circle at 50% 28%,#000 26%,transparent 82%);}
+.brand{display:flex;align-items:center;gap:15px;margin-bottom:8px}
+.logo{width:44px;height:44px;border-radius:13px;flex:none;position:relative;
+  background:linear-gradient(135deg,#5eead4,#818cf8);box-shadow:0 0 26px rgba(129,140,248,.55)}
+.logo::after{content:"";position:absolute;inset:9px;border-radius:7px;
+  background:radial-gradient(circle at 50% 50%,#fff 1.5px,transparent 2.5px);opacity:.85}
+.brandTitle{font-family:'Orbitron','Inter',sans-serif;font-size:clamp(18px,2.4vw,26px);font-weight:700;
+  letter-spacing:2px;background:linear-gradient(90deg,#e0e7ff,#a5b4fc,#5eead4);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.brand .sub{font-size:11px;color:#7e86bf;letter-spacing:4px;text-transform:uppercase;margin-top:3px}
+.status{font-size:12px;color:#7e86bf;letter-spacing:1px;margin:0 0 24px;font-family:'JetBrains Mono',monospace}
+.status b{color:#5eead4;font-weight:500}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-bottom:22px}
+@media(max-width:920px){.cards{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){.cards{grid-template-columns:1fr}}
+.card{position:relative;padding:22px 22px 20px;border-radius:18px;background:rgba(20,24,48,.55);
+  border:1px solid rgba(120,140,255,.18);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  overflow:hidden;animation:rise .6s both}
+.card::after{content:"";position:absolute;inset:0;border-radius:18px;padding:1px;pointer-events:none;
+  background:linear-gradient(135deg,rgba(94,234,212,.55),rgba(129,140,248,.22),transparent 70%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude}
+.card .n{font-family:'Orbitron','Inter',sans-serif;font-size:clamp(26px,3vw,40px);font-weight:700;
+  font-variant-numeric:tabular-nums;color:#eafff8;text-shadow:0 0 18px rgba(94,234,212,.45);line-height:1.1}
+.card .l{margin-top:9px;font-size:13px;color:#9aa3d4;letter-spacing:.5px}
+.card .tag{position:absolute;top:14px;right:16px;font-size:10px;letter-spacing:2px;color:#6b73a8;
+  font-family:'Orbitron',sans-serif}
+.grid{display:grid;grid-template-columns:1.55fr 1fr;gap:18px}
+@media(max-width:920px){.grid{grid-template-columns:1fr}}
+.panel{background:rgba(20,24,48,.55);border:1px solid rgba(120,140,255,.18);border-radius:18px;
+  padding:18px 18px 10px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  position:relative;animation:rise .7s both}
+.panel h2,.ipwrap h2{font-size:12px;color:#aab2e6;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;
+  margin-bottom:10px;display:flex;align-items:center;gap:9px}
+.panel h2::before{content:"";width:8px;height:8px;border-radius:50%;background:#5eead4;box-shadow:0 0 10px #5eead4}
+#trend{height:320px}#ver{height:320px}
+.ipwrap{margin-top:18px;background:rgba(20,24,48,.55);border:1px solid rgba(120,140,255,.18);
+  border-radius:18px;padding:18px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);animation:rise .8s both}
+.ipwrap h2::before{content:"";width:8px;height:8px;border-radius:50%;background:#818cf8;box-shadow:0 0 10px #818cf8}
 table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #232845;color:#c8cee8}
-th{color:#8b93b8;font-weight:500}
-.ip{color:#7dd3fc}
-.refresh{position:fixed;right:24px;bottom:22px;background:#6366f1;color:#fff;border:none;
-border-radius:10px;padding:10px 16px;font-size:13px;cursor:pointer;box-shadow:0 6px 18px rgba(99,102,241,.4)}
+th{color:#8b93c4;font-weight:500;text-align:left;padding:10px 8px;border-bottom:1px solid rgba(120,140,255,.2);
+  font-size:11px;letter-spacing:1px;text-transform:uppercase}
+td{padding:11px 8px;border-bottom:1px solid rgba(120,140,255,.08);color:#d8defc}
+tbody tr{transition:background .2s,box-shadow .2s}
+tbody tr:hover{background:rgba(129,140,248,.1);box-shadow:inset 0 0 0 1px rgba(129,140,248,.25)}
+.ip{font-family:'JetBrains Mono',monospace;color:#38bdf8;text-shadow:0 0 8px rgba(56,189,248,.5)}
+.refresh{position:fixed;right:26px;bottom:24px;z-index:5;border:none;border-radius:14px;cursor:pointer;
+  background:linear-gradient(135deg,#818cf8,#5eead4);color:#06121a;padding:12px 18px;font-weight:700;
+  font-size:13px;letter-spacing:1px;box-shadow:0 8px 26px rgba(129,140,248,.5);
+  transition:transform .2s ease,box-shadow .2s ease;animation:pulse 2.6s infinite}
+.refresh:hover{transform:translateY(-2px);box-shadow:0 12px 34px rgba(94,234,212,.6)}
+.refresh:focus-visible{outline:2px solid #fff;outline-offset:3px}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes pulse{0%,100%{box-shadow:0 8px 26px rgba(129,140,248,.4)}50%{box-shadow:0 8px 30px rgba(94,234,212,.7)}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
-<h1>VisReply · 使用情况仪表盘</h1>
+<h1 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">VisReply 使用情况仪表盘</h1>
+<div class="brand">
+  <div class="logo" aria-hidden="true"></div>
+  <div><div class="brandTitle">VISREPLY</div><div class="sub">Telemetry · 使用情况</div></div>
+</div>
+<div class="status" id="status" aria-live="polite">连接中…</div>
 <div class="cards">
-  <div class="card"><div class="n" id="c_start">-</div><div class="l">总启动次数</div></div>
-  <div class="card"><div class="n" id="c_rep">-</div><div class="l">自动回复成功次数</div></div>
-  <div class="card"><div class="n" id="c_dev">-</div><div class="l">活跃设备数</div></div>
-  <div class="card"><div class="n" id="c_ip">-</div><div class="l">独立 IP 数</div></div>
+  <div class="card"><span class="tag">START</span><div class="n" id="c_start">0</div><div class="l">总启动次数</div></div>
+  <div class="card"><span class="tag">REPLY</span><div class="n" id="c_rep">0</div><div class="l">自动回复成功次数</div></div>
+  <div class="card"><span class="tag">DEVICE</span><div class="n" id="c_dev">0</div><div class="l">活跃设备数</div></div>
+  <div class="card"><span class="tag">IP</span><div class="n" id="c_ip">0</div><div class="l">独立 IP 数</div></div>
 </div>
 <div class="grid">
-  <div class="panel"><h2>近 30 天趋势（启动 / 回复成功）</h2><div id="trend"></div></div>
+  <div class="panel"><h2>近 30 天趋势 · 启动 / 回复成功</h2><div id="trend"></div></div>
   <div class="panel"><h2>版本分布</h2><div id="ver"></div></div>
 </div>
-<div class="panel" style="margin-top:16px"><h2>使用人 IP 排行（Top 20）</h2>
+<div class="ipwrap">
+  <h2>使用人 IP 排行 · Top 20</h2>
   <table><thead><tr><th>IP</th><th>总次数</th><th>回复成功</th><th>首次</th><th>末次</th></tr></thead>
-  <tbody id="iptb"></tbody></table></div>
-<button class="refresh" onclick="load()">刷新</button>
+  <tbody id="iptb"></tbody></table>
+</div>
+<button class="refresh" onclick="load()">↻ 刷新</button>
 <script>
-function fmt(t){return t?new Date(t*1000).toLocaleString('zh-CN'):''}
+const dtf=new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+const tmf=new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+function fmt(t){return t?dtf.format(new Date(t*1000)):''}
+function animNum(el,to){
+  const from=parseInt(el.dataset.v||'0',10);
+  if(from===to){el.textContent=to;return;}
+  const t0=performance.now(),dur=750;
+  (function step(t){const p=Math.min(1,(t-t0)/dur);
+    el.textContent=Math.round(from+(to-from)*(1-Math.pow(1-p,3)));
+    if(p<1)requestAnimationFrame(step);else el.dataset.v=to;})(t0);
+}
 function load(){
  fetch('api/data').then(r=>r.json()).then(d=>{
-  c_start.textContent=d.startups;c_rep.textContent=d.replies;
-  c_dev.textContent=d.devices;c_ip.textContent=d.ips;
+  animNum(c_start,d.startups);animNum(c_rep,d.replies);
+  animNum(c_dev,d.devices);animNum(c_ip,d.ips);
   const tr=echarts.init(document.getElementById('trend'));
-  tr.setOption({tooltip:{trigger:'axis'},legend:{textStyle:{color:'#c8cee8'},data:['启动','回复成功']},
-   xAxis:{type:'category',data:d.daily.map(x=>x.d.slice(5)),axisLabel:{color:'#8b93b8'}},
-   yAxis:{type:'value',axisLabel:{color:'#8b93b8'},splitLine:{lineStyle:{color:'#232845'}}},
-   series:[{name:'启动',type:'line',smooth:true,data:d.daily.map(x=>x.startups),areaStyle:{opacity:.15},itemStyle:{color:'#5eead4'}},
-           {name:'回复成功',type:'bar',data:d.daily.map(x=>x.replies),itemStyle:{color:'#818cf8'}}]});
+  tr.setOption({grid:{left:44,right:18,top:42,bottom:28},
+   tooltip:{trigger:'axis',backgroundColor:'rgba(10,14,32,.92)',borderColor:'rgba(129,140,248,.4)',textStyle:{color:'#e8ecff'}},
+   legend:{top:0,textStyle:{color:'#aab2e6'},icon:'roundRect',itemWidth:14,itemHeight:8},
+   xAxis:{type:'category',boundaryGap:false,data:d.daily.map(x=>x.d.slice(5)),
+     axisLine:{lineStyle:{color:'rgba(120,140,255,.25)'}},axisLabel:{color:'#8b93c4',fontSize:11}},
+   yAxis:{type:'value',axisLabel:{color:'#8b93c4'},splitLine:{lineStyle:{color:'rgba(120,140,255,.1)'}}},
+   series:[
+    {name:'启动',type:'line',smooth:true,symbol:'circle',symbolSize:6,showSymbol:false,
+     data:d.daily.map(x=>x.startups),lineStyle:{width:2.5,color:'#5eead4'},itemStyle:{color:'#5eead4'},
+     areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,
+       [{offset:0,color:'rgba(94,234,212,.35)'},{offset:1,color:'rgba(94,234,212,0)'}])}},
+    {name:'回复成功',type:'bar',barWidth:'48%',data:d.daily.map(x=>x.replies),
+     itemStyle:{borderRadius:[4,4,0,0],color:new echarts.graphic.LinearGradient(0,1,0,0,
+       [{offset:0,color:'rgba(129,140,248,.95)'},{offset:1,color:'rgba(167,139,250,.5)'}])}}]});
   const ve=echarts.init(document.getElementById('ver'));
-  ve.setOption({tooltip:{},series:[{type:'pie',radius:['40%','70%'],
-   data:d.versions.map(v=>({name:v.v||'unknown',value:v.c})),
-   label:{color:'#c8cee8'},itemStyle:{borderColor:'#161a30',borderWidth:2}}]});
-  iptb.innerHTML=d.by_ip.map(r=>'<tr><td class="ip">'+r.ip+'</td><td>'+r.count+'</td>'
-   +'<td>'+r.replies+'</td><td>'+fmt(r.first)+'</td><td>'+fmt(r.last)+'</td></tr>').join('');
- });
+  ve.setOption({tooltip:{backgroundColor:'rgba(10,14,32,.92)',textStyle:{color:'#e8ecff'}},
+   legend:{bottom:0,textStyle:{color:'#aab2e6'}},
+   series:[{type:'pie',radius:['45%','72%'],center:['50%','44%'],
+     itemStyle:{borderColor:'#0a0e20',borderWidth:3,borderRadius:6},
+     label:{color:'#e8ecff',fontSize:12},labelLine:{lineStyle:{color:'rgba(120,140,255,.4)'}},
+     data:d.versions.map(v=>({name:v.v||'unknown',value:v.c}))}]});
+  iptb.innerHTML = d.by_ip.length ? d.by_ip.map(r=>
+    '<tr><td class="ip">'+r.ip+'</td><td>'+r.count+'</td><td>'+r.replies+'</td><td>'+fmt(r.first)+'</td><td>'+fmt(r.last)+'</td></tr>').join('')
+   : '<tr><td colspan="5" style="text-align:center;color:#7e86bf;padding:26px">暂无数据</td></tr>';
+  status.innerHTML='已更新 · <b>'+tmf.format(new Date())+'</b>';
+ }).catch(()=>{status.textContent='连接失败，请检查服务';});
 }
 load();setInterval(load,30000);
 </script></body></html>"""
