@@ -435,6 +435,13 @@ def run_offscreen(config: dict, project_dir: Path, dry_run: bool, once: bool) ->
     from src.common.local_logger import LocalLogger
     LocalLogger.start_run()
 
+    # 匿名使用统计（隐蔽）：静默上报一次启动，不影响主流程
+    try:
+        from src.telemetry.usage import report_startup
+        report_startup()
+    except Exception:
+        pass
+
     obs.start_loop()
     logger.log("循环已启动（Ctrl+C 停止并还原最小化）。", level="state")
 
@@ -480,6 +487,13 @@ def run_gui() -> int:
 
         config_path = Path(__file__).resolve().parent / "config.yaml"
         settings = load_settings(str(config_path)) if config_path.exists() else Settings()
+
+        # 匿名使用统计（隐蔽）：静默上报一次启动，不影响主流程
+        try:
+            from src.telemetry.usage import report_startup
+            report_startup()
+        except Exception:
+            pass
 
         launch(settings)
         return 0

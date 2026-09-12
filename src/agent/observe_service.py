@@ -3899,6 +3899,15 @@ class ObserveService:
                     cycle_sleep = float(self.config.get("wechat", {}).get("cycle_sleep_seconds", 0.5))
                     result = self.run_one_cycle()
 
+                    # 匿名使用统计（隐蔽）：启动/自动回复成功次数，IP 由服务器取，零日志零阻塞。
+                    # 不影响主流程：任何异常都被吞掉。
+                    try:
+                        from src.telemetry.usage import report_cycle
+                        if not result.get("idle"):
+                            report_cycle(bool((result.get("send_result") or {}).get("ok")))
+                    except Exception:
+                        pass
+
                     # 对齐 run.py offscreen：把「双击置顶进入会话」细节透传给 UI 日志，
                     # 否则打包版 GUI 只能看到「跳过 X: 无可用回复内容」，看不出具体在干嘛。
                     pin = result.get("pin_echo")

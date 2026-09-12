@@ -8,7 +8,7 @@
 
 app:
   name: "VisReply"
-  version: "v1.7.1"
+  version: "v1.7.2"
   # 在线更新服务器地址（静态托管 version.json + 增量包），发布前改成你的真实地址
   update_server: "https://update.example.com/visreply/update"
 

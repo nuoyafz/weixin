@@ -75,3 +75,6 @@ _trash_*/
 *.swo
 Thumbs.db
 .DS_Store
+
+# UI 换肤工作台（本地临时产物，不进仓库/不进安装包）
+_ui_tmp/
